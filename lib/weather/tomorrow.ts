@@ -26,23 +26,53 @@ export async function fetchWeatherGrid(tiles: Array<{ lat: number; lon: number }
   if (!apiKey) return { tiles: tiles.map((tile) => ({ ...tile, data: null, error: 'TOMORROW_API_KEY não configurada' })), timeline: [], timestamp: now, updateTimestamp: now, nextUpdate: now + 300000, status: 'error', message: 'Dados meteorológicos indisponíveis' }
 
   inFlight = (async () => {
-  let centerData: WeatherData
-  try {
-    const payload = await fetchJson(`${API_URL}?location=${CENTER.lat},${CENTER.lon}&apikey=${encodeURIComponent(apiKey)}&units=metric`, { next: { revalidate: 300 } })
-    centerData = normalize(payload.data?.values ?? {}, Date.parse(payload.data?.time ?? new Date().toISOString()))
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Falha ao consultar o serviço'
-    return { tiles: tiles.map((tile) => ({ ...tile, data: null, error: message })), timeline: [], timestamp: now, updateTimestamp: now, nextUpdate: now + 300000, status: 'error', message: 'Dados meteorológicos indisponíveis' }
+  const results = await Promise.all(
+    tiles.map(async (tile): Promise<WeatherTile> => {
+      try {
+        const payload = await fetchJson(
+          `${API_URL}?location=${tile.lat},${tile.lon}&apikey=${encodeURIComponent(apiKey)}&units=metric`,
+          { next: { revalidate: 300 } },
+        )
+        const timestamp = Date.parse(
+          payload.data?.time ?? new Date().toISOString(),
+        )
+        return {
+          ...tile,
+          data: normalize(payload.data?.values ?? {}, timestamp),
+        }
+      } catch (error) {
+        return {
+          ...tile,
+          data: null,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Falha ao consultar o serviço',
+        }
+      }
+    }),
+  )
+  const firstData = results.find((tile) => tile.data)?.data
+  if (!firstData) {
+    return {
+      tiles: results,
+      timeline: [],
+      timestamp: now,
+      updateTimestamp: now,
+      nextUpdate: now + 300000,
+      status: 'error',
+      message: 'Dados meteorológicos indisponíveis',
+    }
   }
 
-  const results: WeatherTile[] = tiles.map((tile) => ({ ...tile, data: centerData }))
   let timeline: TimelinePoint[] = []
   try {
     const payload = await fetchJson(TIMELINE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: `${CENTER.lat},${CENTER.lon}`, fields: ['precipitationIntensity', 'precipitationProbability'], timesteps: ['1h'], startTime: 'now', endTime: 'nowPlus12h', units: 'metric', apikey: apiKey }), next: { revalidate: 300 } })
     timeline = (payload.data?.timelines?.[0]?.intervals ?? []).map((item: { startTime: string; values?: Record<string, number> }) => ({ time: Date.parse(item.startTime), precipitation: item.values?.precipitationIntensity ?? 0, probability: item.values?.precipitationProbability ?? 0 }))
   } catch { /* A observação atual continua disponível mesmo sem a previsão. */ }
 
-  const response: GridResponse = { tiles: results, timeline, timestamp: now, updateTimestamp: centerData.timestamp, nextUpdate: now + 300000, status: 'success', message: undefined }
+  const hasErrors = results.some((tile) => !tile.data)
+  const response: GridResponse = { tiles: results, timeline, timestamp: now, updateTimestamp: firstData.timestamp, nextUpdate: now + 300000, status: hasErrors ? 'partial' : 'success', message: hasErrors ? 'Alguns pontos não puderam ser consultados' : undefined }
   cachedResponse = response
   cachedAt = now
   return response

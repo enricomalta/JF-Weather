@@ -33,7 +33,7 @@ const empty: GridResponse = {
   status: "error",
   message: "Configure TOMORROW_API_KEY para iniciar o monitoramento.",
 };
-const CACHE_KEY = "jf-weather-grid-cache-v3";
+const CACHE_KEY = "jf-weather-grid-cache-v4";
 const CACHE_TTL = 5 * 60 * 1000;
 const format = (time: number) =>
   new Date(time).toLocaleTimeString("pt-BR", {
@@ -113,13 +113,8 @@ export default function Page() {
     : data.status === "error"
       ? "SERVIÇO INDISPONÍVEL"
       : `ATUALIZADO ${format(data.updateTimestamp)}`;
-  const selectedValue = selectedRain?.precipitation ?? 0;
-  const selectedProbability = selectedRain?.precipitationProbability ?? 0;
-  // A timeline é uma previsão geral da cidade; o painel do bairro deve
-  // continuar usando a observação do ponto mais próximo selecionado.
   const detailValue = currentPoint?.precipitation ?? rain?.precipitation ?? 0;
-  const detailProbability =
-    currentPoint?.probability ?? rain?.precipitationProbability ?? 0;
+  const detailProbability = currentPoint?.probability ?? rain?.precipitationProbability ?? 0;
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
   return (
     <main className="radar-shell">
@@ -289,15 +284,11 @@ export default function Page() {
                 />
               </div>
               <div className="timeline-scale">
-                <span>AGORA</span>
-{activeTimeline
-  .filter((_, index) => index % 3 === 0)
-                  .map((point) => (
-                    <span key={point.time}>{format(point.time)}</span>
-                  ))}
-                <span>
-                  {format(activeTimeline[activeTimeline.length - 1].time)}
-                </span>
+                {activeTimeline.map((point, index) => (
+                  <span key={point.time}>
+                    {index === 0 ? "AGORA" : format(point.time)}
+                  </span>
+                ))}
               </div>
             </div>
           )}

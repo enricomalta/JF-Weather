@@ -49,7 +49,7 @@ export function WeatherMap({
 }: {
   tiles: WeatherTile[];
   selected: string | null;
-  onSelect: (name: string, weather: WeatherTile["data"]) => void;
+  onSelect: (name: string, tile: WeatherTile | null) => void;
 }) {
   const [geo, setGeo] = useState<GeoFeatureCollection | null>(null);
   const [zoom, setZoom] = useState(11);
@@ -80,7 +80,7 @@ export function WeatherMap({
           const distanceA = Math.hypot(a.lon - longitude, a.lat - latitude);
           const distanceB = Math.hypot(b.lon - longitude, b.lat - latitude);
           return distanceA - distanceB;
-        })[0]?.data ?? null
+        })[0] ?? null
     );
   };
   return (

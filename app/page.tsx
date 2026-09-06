@@ -33,7 +33,7 @@ const empty: GridResponse = {
   status: "error",
   message: "Configure TOMORROW_API_KEY para iniciar o monitoramento.",
 };
-const CACHE_KEY = "jf-weather-grid-cache-v2";
+const CACHE_KEY = "jf-weather-grid-cache-v3";
 const CACHE_TTL = 5 * 60 * 1000;
 const format = (time: number) =>
   new Date(time).toLocaleTimeString("pt-BR", {
@@ -72,8 +72,8 @@ export default function Page() {
           return;
         }
       }
-      const response = await fetch("/api/weather/grid", {
-        cache: "force-cache",
+      const response = await fetch(`/api/weather/grid?refresh=${Date.now()}`, {
+        cache: "no-store",
       });
       const next = (await response.json()) as GridResponse;
       setData(next);
@@ -91,7 +91,9 @@ export default function Page() {
   useEffect(() => {
     refresh();
   }, []);
-  const activeTimeline = selectedTile?.timeline?.length ? selectedTile.timeline : data.timeline;
+  const activeTimeline = selectedTile?.timeline?.length
+    ? selectedTile.timeline
+    : data.timeline;
 
   useEffect(() => {
     if (!playing || activeTimeline.length < 2) return;
@@ -115,12 +117,9 @@ export default function Page() {
   const selectedProbability = selectedRain?.precipitationProbability ?? 0;
   // A timeline é uma previsão geral da cidade; o painel do bairro deve
   // continuar usando a observação do ponto mais próximo selecionado.
-  const detailValue = selected
-    ? selectedValue
-    : (currentPoint?.precipitation ?? rain?.precipitation ?? 0);
-  const detailProbability = selected
-    ? selectedProbability
-    : (currentPoint?.probability ?? rain?.precipitationProbability ?? 0);
+  const detailValue = currentPoint?.precipitation ?? rain?.precipitation ?? 0;
+  const detailProbability =
+    currentPoint?.probability ?? rain?.precipitationProbability ?? 0;
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
   return (
     <main className="radar-shell">

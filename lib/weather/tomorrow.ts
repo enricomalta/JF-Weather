@@ -17,10 +17,13 @@ async function fetchJson(url: string, init: RequestInit & { next?: { revalidate:
   return response.json()
 }
 
-function normalizeTimeline(intervals: Array<{ values?: Record<string, number> }>): TimelinePoint[] {
-  const firstHour = Math.floor(Date.now() / 3600000) * 3600000
+function normalizeTimeline(
+  intervals: Array<{ startTime?: string; values?: Record<string, number> }>,
+): TimelinePoint[] {
   return intervals.map((item, index) => ({
-    time: firstHour + index * 3600000,
+    time:
+      Date.parse(item.startTime ?? "") ||
+      Math.floor(Date.now() / 3600000) * 3600000 + index * 3600000,
     precipitation: item.values?.precipitationIntensity ?? 0,
     probability: item.values?.precipitationProbability ?? 0,
   }))

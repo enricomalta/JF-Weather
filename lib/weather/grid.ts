@@ -1,11 +1,16 @@
 export const JUIZ_DE_FORA = { lat: -21.7642, lon: -43.3503 }
 
-export function createWeatherGrid(rows = 5, columns = 7) {
-  const latStep = 0.42 / Math.max(rows - 1, 1)
-  const lonStep = 0.56 / Math.max(columns - 1, 1)
+export function createWeatherGrid(rows = 9, columns = 11) {
+  const latSpan = 0.24
+  const lonSpan = 0.32
+  const latStep = latSpan / Math.max(rows - 1, 1)
+  const lonStep = lonSpan / Math.max(columns - 1, 1)
   return Array.from({ length: rows * columns }, (_, index) => {
     const row = Math.floor(index / columns)
     const column = index % columns
-    return { lat: -21.97 + row * latStep, lon: -43.63 + column * lonStep }
+    return {
+      lat: -21.884 + row * latStep,
+      lon: -43.510 - lonStep * column,
+    }
   })
 }

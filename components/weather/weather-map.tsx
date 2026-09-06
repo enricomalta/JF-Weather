@@ -35,10 +35,8 @@ function Actions() {
   useEffect(() => {
     const reset = () => map.setView(CENTER, 11, { animate: false });
     window.addEventListener("jf-map-center", reset);
-    window.addEventListener("jf-map-reset", reset);
     return () => {
       window.removeEventListener("jf-map-center", reset);
-      window.removeEventListener("jf-map-reset", reset);
     };
   }, [map]);
   return null;

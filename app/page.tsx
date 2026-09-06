@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { Crosshair, LocateFixed, Pause, Play, RefreshCw } from "lucide-react";
+import Image from "next/image";
 
 const WeatherMap = dynamic(
   () =>
@@ -121,9 +122,16 @@ export default function Page() {
     <main className="radar-shell">
       <header className="radar-header">
         <div className="brand">
-          <span className="brand-mark">JF</span>
+          <span className="brand-mark">
+            <Image
+              src="/icon.png"
+              alt="Ícone"
+              width={100}
+              height={100}
+            />
+          </span>
           <div>
-            <strong>JF WEATHER RADAR</strong>
+            <strong>JF RADAR</strong>
             <small>Juiz de Fora · MG</small>
           </div>
         </div>
@@ -160,15 +168,6 @@ export default function Page() {
           >
             <LocateFixed size={17} />
           </button>
-          <button
-            onClick={() =>
-              window.dispatchEvent(new CustomEvent("jf-map-reset"))
-            }
-            aria-label="Resetar mapa"
-            title="Resetar mapa"
-          >
-            <Crosshair size={17} />
-          </button>
         </div>
         <div className="map-legend">
           <span>INTENSIDADE DA CHUVA</span>
@@ -200,7 +199,7 @@ export default function Page() {
             <span>BAIRRO SELECIONADO</span>
             <strong>{selected}</strong>
             <div className="rain-detail">
-              <b>
+              {/* <b>
                 {selected
                   ? selectedHasRain
                     ? "Chuva prevista"
@@ -211,7 +210,7 @@ export default function Page() {
                       ? "Chuva prevista"
                       : "Sem chuva"
                     : "Chuva sem observação"}
-              </b>
+              </b> */}
               <span>Intensidade: {intensity(detailValue)}</span>
               <span>
                 Precipitação:{" "}

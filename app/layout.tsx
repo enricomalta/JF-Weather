@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'JF Weather Radar | Monitoramento Regional',
+  title: 'JF Radar Meteorológico | Monitoramento Regional',
   description: 'Radar meteorológico regional em tempo real para Juiz de Fora e Zona da Mata.',
   generator: 'v0.app',
   icons: {

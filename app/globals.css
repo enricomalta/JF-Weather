@@ -581,6 +581,10 @@ button {
     contrast(120%)
     saturate(55%);
 }
+.rain-detail span{
+    display: flex;
+    gap: 10px;
+}
 
 @media(max-width:640px) {
     .radar-header {
@@ -597,7 +601,7 @@ button {
 
     .map-legend {
         left: 10px;
-        bottom: 10px
+        bottom: 150px
     }
 
     .map-tools {

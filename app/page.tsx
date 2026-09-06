@@ -111,12 +111,14 @@ export default function Page() {
       : `ATUALIZADO ${format(data.updateTimestamp)}`;
   const selectedValue = selectedRain?.precipitation ?? 0;
   const selectedProbability = selectedRain?.precipitationProbability ?? 0;
-  const detailValue =
-    currentPoint?.precipitation ??
-    (selected ? selectedValue : (rain?.precipitation ?? 0));
-  const detailProbability =
-    currentPoint?.probability ??
-    (selected ? selectedProbability : (rain?.precipitationProbability ?? 0));
+  // A timeline é uma previsão geral da cidade; o painel do bairro deve
+  // continuar usando a observação do ponto mais próximo selecionado.
+  const detailValue = selected
+    ? selectedValue
+    : (currentPoint?.precipitation ?? rain?.precipitation ?? 0);
+  const detailProbability = selected
+    ? selectedProbability
+    : (currentPoint?.probability ?? rain?.precipitationProbability ?? 0);
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
   return (
     <main className="radar-shell">

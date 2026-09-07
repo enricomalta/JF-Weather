@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@opentelemetry/api": "^1.9.1",
     "@react-three/drei": "^10.7.8",
     "@react-three/fiber": "^9.7.0",
     "@types/leaflet": "^1.9.22",

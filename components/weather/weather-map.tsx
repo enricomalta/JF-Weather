@@ -49,7 +49,7 @@ export function WeatherMap({
 }: {
   tiles: WeatherTile[];
   selected: string | null;
-  onSelect: (name: string, weather: WeatherTile["data"]) => void;
+  onSelect: (name: string, tile: WeatherTile | null) => void;
 }) {
   const [geo, setGeo] = useState<GeoFeatureCollection | null>(null);
   const [zoom, setZoom] = useState(11);
@@ -60,27 +60,40 @@ export function WeatherMap({
       .catch(() => setGeo(null));
   }, []);
   const collection = geo as unknown as FeatureCollection;
-  const nearest = (feature: { geometry: { coordinates: unknown } }) => {
-    const values =
-      JSON.stringify(feature.geometry.coordinates)
-        .match(/-?\d+(?:\.\d+)?/g)
-        ?.map(Number) ?? [];
-    const longitudes = values.filter((_, index) => index % 2 === 0);
-    const latitudes = values.filter((_, index) => index % 2 === 1);
-    const longitude = longitudes.length
-      ? longitudes.reduce((sum, value) => sum + value, 0) / longitudes.length
+  const nearest = (feature: any) => {
+    const pairs: Array<[number, number]> = [];
+    const collectPairs = (value: unknown) => {
+      if (!Array.isArray(value)) return;
+      if (
+        value.length >= 2 &&
+        typeof value[0] === "number" &&
+        typeof value[1] === "number"
+      ) {
+        pairs.push([value[0], value[1]]);
+        return;
+      }
+      value.forEach(collectPairs);
+    };
+    collectPairs(feature.geometry?.coordinates);
+    const longitude = pairs.length
+      ? pairs.reduce((sum, pair) => sum + pair[0], 0) / pairs.length
       : CENTER[1];
-    const latitude = latitudes.length
-      ? latitudes.reduce((sum, value) => sum + value, 0) / latitudes.length
+    const latitude = pairs.length
+      ? pairs.reduce((sum, pair) => sum + pair[1], 0) / pairs.length
       : CENTER[0];
+
     return (
       tiles
         .filter((tile) => tile.data)
-        .sort((a, b) => {
-          const distanceA = Math.hypot(a.lon - longitude, a.lat - latitude);
-          const distanceB = Math.hypot(b.lon - longitude, b.lat - latitude);
-          return distanceA - distanceB;
-        })[0]?.data ?? null
+        .reduce<WeatherTile | null>((closest, tile) => {
+          if (!closest) return tile;
+          const distance = Math.hypot(tile.lon - longitude, tile.lat - latitude);
+          const closestDistance = Math.hypot(
+            closest.lon - longitude,
+            closest.lat - latitude,
+          );
+          return distance < closestDistance ? tile : closest;
+        }, null)
     );
   };
   return (

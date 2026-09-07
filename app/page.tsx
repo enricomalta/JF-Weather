@@ -21,6 +21,7 @@ import type {
   GridResponse,
   TimelinePoint,
   WeatherData,
+  WeatherTile,
 } from "@/lib/weather/types";
 
 const empty: GridResponse = {
@@ -32,7 +33,7 @@ const empty: GridResponse = {
   status: "error",
   message: "Configure TOMORROW_API_KEY para iniciar o monitoramento.",
 };
-const CACHE_KEY = "jf-weather-grid-cache-v2";
+const CACHE_KEY = "jf-weather-grid-cache-v4";
 const CACHE_TTL = 5 * 60 * 1000;
 const format = (time: number) =>
   new Date(time).toLocaleTimeString("pt-BR", {
@@ -53,6 +54,7 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedRain, setSelectedRain] = useState<WeatherData | null>(null);
+  const [selectedTile, setSelectedTile] = useState<WeatherTile | null>(null);
   const [timelineIndex, setTimelineIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   async function refresh(force = false) {
@@ -70,8 +72,8 @@ export default function Page() {
           return;
         }
       }
-      const response = await fetch("/api/weather/grid", {
-        cache: "force-cache",
+      const response = await fetch(`/api/weather/grid?refresh=${Date.now()}`, {
+        cache: "no-store",
       });
       const next = (await response.json()) as GridResponse;
       setData(next);
@@ -89,34 +91,30 @@ export default function Page() {
   useEffect(() => {
     refresh();
   }, []);
+  const activeTimeline = selectedTile?.timeline?.length
+    ? selectedTile.timeline
+    : data.timeline;
+
   useEffect(() => {
-    if (!playing || data.timeline.length < 2) return;
+    if (!playing || activeTimeline.length < 2) return;
     const timer = window.setInterval(
       () =>
         setTimelineIndex((value) =>
-          value >= data.timeline.length - 1 ? 0 : value + 1,
+          value >= activeTimeline.length - 1 ? 0 : value + 1,
         ),
       900,
     );
     return () => window.clearInterval(timer);
-  }, [playing, data.timeline.length]);
-  const rain =
-    selectedRain ?? data.tiles.find((tile) => tile.data)?.data ?? null;
-  const currentPoint: TimelinePoint | null =
-    data.timeline[timelineIndex] ?? null;
+  }, [playing, activeTimeline.length]);
+  const rain = selectedRain ?? data.tiles.find((tile) => tile.data)?.data ?? null;
+  const currentPoint: TimelinePoint | null = activeTimeline[timelineIndex] ?? null;
   const status = loading
     ? "ATUALIZANDO…"
     : data.status === "error"
       ? "SERVIÇO INDISPONÍVEL"
       : `ATUALIZADO ${format(data.updateTimestamp)}`;
-  const selectedValue = selectedRain?.precipitation ?? 0;
-  const selectedProbability = selectedRain?.precipitationProbability ?? 0;
-  const detailValue =
-    currentPoint?.precipitation ??
-    (selected ? selectedValue : (rain?.precipitation ?? 0));
-  const detailProbability =
-    currentPoint?.probability ??
-    (selected ? selectedProbability : (rain?.precipitationProbability ?? 0));
+  const detailValue = currentPoint?.precipitation ?? rain?.precipitation ?? 0;
+  const detailProbability = currentPoint?.probability ?? rain?.precipitationProbability ?? 0;
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
   return (
     <main className="radar-shell">
@@ -153,9 +151,11 @@ export default function Page() {
         <WeatherMap
           tiles={data.tiles}
           selected={selected}
-          onSelect={(name, weather) => {
+          onSelect={(name, tile) => {
             setSelected(name);
-            setSelectedRain(weather);
+            setSelectedTile(tile);
+            setSelectedRain(tile?.data ?? null);
+            setTimelineIndex(0);
           }}
         />
         <div className="map-tools">
@@ -191,6 +191,8 @@ export default function Page() {
               onClick={() => {
                 setSelected(null);
                 setSelectedRain(null);
+                setSelectedTile(null);
+                setTimelineIndex(0);
               }}
               aria-label="Fechar"
             >
@@ -217,7 +219,7 @@ export default function Page() {
                 {currentPoint
                   ? `${detailValue.toFixed(1)} mm/h`
                   : selectedRain
-                    ? `${selectedValue.toFixed(1)} mm/h`
+                    ? `${selectedRain.precipitation.toFixed(1)} mm/h`
                     : rain
                       ? `${rain.precipitation.toFixed(1)} mm/h`
                       : "indisponível"}
@@ -248,7 +250,7 @@ export default function Page() {
                 : "Aguardando dados"}
             </strong>
           </div>
-          {data.timeline.length > 0 && (
+          {activeTimeline.length > 0 && (
             <div className="video-timeline">
               <div className="timeline-controls">
                 <button
@@ -265,14 +267,14 @@ export default function Page() {
                 <div
                   className="timeline-progress"
                   style={{
-                    width: `${data.timeline.length > 1 ? (timelineIndex / (data.timeline.length - 1)) * 100 : 0}%`,
+                    width: `${activeTimeline.length > 1 ? (timelineIndex / (activeTimeline.length - 1)) * 100 : 0}%`,
                   }}
                 />
                 <input
                   className="timeline-slider"
                   type="range"
                   min="0"
-                  max={data.timeline.length - 1}
+                  max={activeTimeline.length - 1}
                   value={timelineIndex}
                   onChange={(event) => {
                     setPlaying(false);
@@ -282,15 +284,11 @@ export default function Page() {
                 />
               </div>
               <div className="timeline-scale">
-                <span>AGORA</span>
-                {data.timeline
-                  .filter((_, index) => index % 3 === 0)
-                  .map((point) => (
-                    <span key={point.time}>{format(point.time)}</span>
-                  ))}
-                <span>
-                  {format(data.timeline[data.timeline.length - 1].time)}
-                </span>
+                {activeTimeline.map((point, index) => (
+                  <span key={point.time}>
+                    {index === 0 ? "AGORA" : format(point.time)}
+                  </span>
+                ))}
               </div>
             </div>
           )}

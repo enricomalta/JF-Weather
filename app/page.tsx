@@ -219,7 +219,7 @@ export default function Page() {
                 {currentPoint
                   ? `${detailValue.toFixed(1)} mm/h`
                   : selectedRain
-                    ? `${selectedValue.toFixed(1)} mm/h`
+                    ? `${selectedRain.precipitation.toFixed(1)} mm/h`
                     : rain
                       ? `${rain.precipitation.toFixed(1)} mm/h`
                       : "indisponível"}

@@ -60,7 +60,7 @@ export function WeatherMap({
       .catch(() => setGeo(null));
   }, []);
   const collection = geo as unknown as FeatureCollection;
-  const nearest = (feature: { geometry: { coordinates: unknown } }) => {
+  const nearest = (feature: any) => {
     const pairs: Array<[number, number]> = [];
     const collectPairs = (value: unknown) => {
       if (!Array.isArray(value)) return;
@@ -74,7 +74,7 @@ export function WeatherMap({
       }
       value.forEach(collectPairs);
     };
-    collectPairs(feature.geometry.coordinates);
+    collectPairs(feature.geometry?.coordinates);
     const longitude = pairs.length
       ? pairs.reduce((sum, pair) => sum + pair[0], 0) / pairs.length
       : CENTER[1];

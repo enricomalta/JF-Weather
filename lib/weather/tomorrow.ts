@@ -1,71 +1,49 @@
-import type { GridResponse, TimelinePoint, WeatherData, WeatherTile } from './types'
+import { FieldValue, WEATHER_COLLECTION, WEATHER_META_DOCUMENT, refreshSecretIsValid, sendDiscordAlert, serializeFirestore, weatherDb } from "./firebase-admin"
+import { loadNeighborhoods, type NeighborhoodPoint } from "./neighborhoods"
+import type { GridResponse, TimelinePoint, WeatherData, WeatherTile } from "./types"
 
-const API_URL = 'https://api.tomorrow.io/v4/weather/realtime'
-const TIMELINE_URL = 'https://api.tomorrow.io/v4/timelines'
-const CACHE_TTL = 5 * 60 * 1000
-let cachedResponse: GridResponse | null = null
-let cachedAt = 0
-let inFlight: Promise<GridResponse> | null = null
+const API_URL = "https://api.tomorrow.io/v4/weather/realtime"
+const TIMELINE_URL = "https://api.tomorrow.io/v4/timelines"
+const HOURS = 12
 
 function normalize(values: Record<string, number>, timestamp: number): WeatherData {
   return { temperature: values.temperature ?? values.temperatureApparent ?? 0, humidity: values.humidity ?? 0, precipitation: values.precipitationIntensity ?? 0, precipitationProbability: values.precipitationProbability ?? 0, windSpeed: values.windSpeed ?? 0, windDirection: values.windDirection ?? 0, cloudCover: values.cloudCover ?? 0, timestamp }
 }
-
-async function fetchJson(url: string, init: RequestInit & { next?: { revalidate: number } }) {
+async function request(url: string, init?: RequestInit) {
   const response = await fetch(url, init)
   if (!response.ok) throw new Error(`Tomorrow.io respondeu ${response.status}`)
   return response.json()
 }
-
-function normalizeTimeline(
-  intervals: Array<{ startTime?: string; values?: Record<string, number> }>,
-): TimelinePoint[] {
-  return intervals.map((item, index) => ({
-    time:
-      Date.parse(item.startTime ?? "") ||
-      Math.floor(Date.now() / 3600000) * 3600000 + index * 3600000,
-    precipitation: item.values?.precipitationIntensity ?? 0,
-    probability: item.values?.precipitationProbability ?? 0,
-  }))
+function timeline(intervals: Array<{ startTime?: string; values?: Record<string, number> }>): TimelinePoint[] {
+  return intervals.slice(0, HOURS).map((item) => ({ time: Date.parse(item.startTime ?? ""), precipitation: item.values?.precipitationIntensity ?? 0, probability: item.values?.precipitationProbability ?? 0 })).filter((item) => Number.isFinite(item.time))
 }
-
-async function fetchTimeline(lat: number, lon: number, apiKey: string): Promise<TimelinePoint[]> {
-  const payload = await fetchJson(TIMELINE_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ location: `${lat},${lon}`, fields: ['precipitationIntensity', 'precipitationProbability'], timesteps: ['1h'], startTime: 'now', endTime: 'nowPlus12h', units: 'metric', apikey: apiKey }),
-    next: { revalidate: 300 },
-  })
-  return normalizeTimeline(payload.data?.timelines?.[0]?.intervals ?? [])
+async function fetchNeighborhood(point: NeighborhoodPoint, key: string): Promise<WeatherTile> {
+  const [current, forecast] = await Promise.all([
+    request(`${API_URL}?location=${point.lat},${point.lon}&apikey=${encodeURIComponent(key ?? "")}&units=metric`),
+    request(TIMELINE_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: `${point.lat},${point.lon}`, fields: ["precipitationIntensity", "precipitationProbability"], timesteps: ["1h"], startTime: "now", endTime: "nowPlus12h", units: "metric", apikey: key }) }),
+  ])
+  const timestamp = Date.parse(current.data?.time ?? new Date().toISOString())
+  return { id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: normalize(current.data?.values ?? {}, timestamp), timeline: timeline(forecast.data?.timelines?.[0]?.intervals ?? []) }
 }
-
-export async function fetchWeatherGrid(tiles: Array<{ lat: number; lon: number }>): Promise<GridResponse> {
-  const apiKey = process.env.TOMORROW_API_KEY
-  const now = Date.now()
-  if (cachedResponse && now - cachedAt < CACHE_TTL) return cachedResponse
-  if (inFlight) return inFlight
-  if (!apiKey) return { tiles: tiles.map((tile) => ({ ...tile, data: null, timeline: [], error: 'TOMORROW_API_KEY não configurada' })), timeline: [], timestamp: now, updateTimestamp: now, nextUpdate: now + 300000, status: 'error', message: 'Dados meteorológicos indisponíveis' }
-
-  inFlight = (async () => {
-    const results = await Promise.all(tiles.map(async (tile): Promise<WeatherTile> => {
-      try {
-        const payload = await fetchJson(`${API_URL}?location=${tile.lat},${tile.lon}&apikey=${encodeURIComponent(apiKey)}&units=metric`, { next: { revalidate: 300 } })
-        const timestamp = Date.parse(payload.data?.time ?? new Date().toISOString())
-        let timeline: TimelinePoint[] = []
-        try { timeline = await fetchTimeline(tile.lat, tile.lon, apiKey) } catch { /* Mantém a observação atual quando a previsão falhar. */ }
-        return { ...tile, data: normalize(payload.data?.values ?? {}, timestamp), timeline }
-      } catch (error) {
-        return { ...tile, data: null, timeline: [], error: error instanceof Error ? error.message : 'Falha ao consultar o serviço' }
-      }
-    }))
-    const firstData = results.find((tile) => tile.data)?.data
-    if (!firstData) return { tiles: results, timeline: [], timestamp: now, updateTimestamp: now, nextUpdate: now + 300000, status: 'error', message: 'Dados meteorológicos indisponíveis' }
-    const selectedTimeline = results.find((tile) => tile.timeline.length > 0)?.timeline ?? []
-    const hasErrors = results.some((tile) => !tile.data)
-    const response: GridResponse = { tiles: results, timeline: selectedTimeline, timestamp: now, updateTimestamp: firstData.timestamp, nextUpdate: now + 300000, status: hasErrors ? 'partial' : 'success', message: hasErrors ? 'Alguns pontos não puderam ser consultados' : undefined }
-    cachedResponse = response
-    cachedAt = now
-    return response
-  })()
-  try { return await inFlight } finally { inFlight = null }
+export async function refreshWeather(request: Request) {
+  if (!refreshSecretIsValid(request)) return new Response("Não autorizado", { status: 401 })
+  const key = process.env.TOMORROW_API_KEY
+  if (!key) return new Response("TOMORROW_API_KEY não configurada", { status: 500 })
+  const points = loadNeighborhoods()
+  const results = await Promise.all(points.map((point) => fetchNeighborhood(point, key!).catch((error) => ({ id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: null, timeline: [], error: error instanceof Error ? error.message : "Falha" }))))
+  const db = weatherDb()
+  const batch = db.batch()
+  for (const tile of results) batch.set(db.collection(WEATHER_COLLECTION).doc(String(tile.id)), { ...tile, updatedAt: FieldValue.serverTimestamp() })
+  batch.set(db.collection(WEATHER_COLLECTION).doc(WEATHER_META_DOCUMENT), { updatedAt: FieldValue.serverTimestamp() })
+  await batch.commit()
+  const alerts = results.filter((tile) => tile.timeline[0]?.precipitation > 0 || (tile.data?.precipitation ?? 0) > 0).map((tile) => tile.name)
+  if (alerts.length) await sendDiscordAlert(`JF Radar: chuva agora ou na próxima hora em ${alerts.join(", ")}.`)
+  return Response.json({ updated: results.length, alerts: alerts.length })
+}
+export async function readWeather(): Promise<GridResponse> {
+  const snapshot = await weatherDb().collection(WEATHER_COLLECTION).get()
+  const tiles = snapshot.docs.filter((doc) => doc.id !== WEATHER_META_DOCUMENT).map((doc) => serializeFirestore(doc.data()) as WeatherTile)
+  const timeline = tiles.find((tile) => tile.timeline.length)?.timeline ?? []
+  const updateTimestamp = Number(snapshot.docs.find((doc) => doc.id === WEATHER_META_DOCUMENT)?.data().updatedAt?.toMillis?.() ?? Date.now())
+  return { tiles, timeline, timestamp: Date.now(), updateTimestamp, nextUpdate: updateTimestamp + 3600000, status: tiles.length ? (tiles.some((tile) => !tile.data) ? "partial" : "success") : "error", message: tiles.length ? undefined : "Nenhuma previsão armazenada" }
 }

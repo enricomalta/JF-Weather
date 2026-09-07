@@ -8,8 +8,8 @@ export interface WeatherData {
   cloudCover: number
   timestamp: number
 }
-export interface WeatherTile { lat: number; lon: number; data: WeatherData | null; error?: string }
 export interface TimelinePoint { time: number; precipitation: number; probability: number }
+export interface WeatherTile { lat: number; lon: number; data: WeatherData | null; timeline: TimelinePoint[]; error?: string }
 export interface GridResponse {
   tiles: WeatherTile[]
   timeline: TimelinePoint[]

@@ -16,7 +16,8 @@ export function weatherDb() {
 }
 
 export const WEATHER_COLLECTION = "weatherNeighborhoods"
-export const WEATHER_META_DOCUMENT = "_meta"
+export const WEATHER_META_COLLECTION = "weatherUpdates"
+export const WEATHER_META_DOCUMENT = "latest"
 
 export function refreshSecretIsValid(request: Request) {
   const header = request.headers.get("authorization")

@@ -3,7 +3,6 @@ import {
   WEATHER_COLLECTION,
   WEATHER_META_COLLECTION,
   WEATHER_META_DOCUMENT,
-  refreshSecretIsValid,
   sendDiscordAlert,
   serializeFirestore,
   weatherDb,
@@ -20,18 +19,19 @@ const TIMELINE_URL = "https://api.tomorrow.io/v4/timelines";
 
 const HOURS = 12;
 
-// Limites operacionais definidos para o projeto.
-// Mantemos margem abaixo dos limites oficiais da conta.
-const MAX_REQUESTS_PER_SECOND = 3;
+// Cada API key pode fazer no máximo 3 requests por segundo.
+const MAX_REQUESTS_PER_SECOND_PER_KEY = 3;
+
+// Limite operacional definido para o projeto.
 const MAX_REQUESTS_PER_HOUR_PER_KEY = 20;
 
-// Intervalo mínimo entre requests do scheduler global.
-// 3 req/s => ~333ms entre requests.
-const REQUEST_INTERVAL_MS = Math.ceil(
-  1000 / MAX_REQUESTS_PER_SECOND,
-);
+// 334 ms garante <= 3 requests/s por key,
+// mantendo uma pequena margem de segurança.
+const REQUEST_INTERVAL_MS = 334;
 
 const REQUEST_TIMEOUT_MS = 15000;
+
+const EXPECTED_API_KEYS = 6;
 
 const TOMORROW_FIELDS = [
   "temperature",
@@ -76,17 +76,29 @@ interface TomorrowError extends Error {
 }
 
 function getApiKeys(): string[] {
-  const keys = Array.from({ length: 6 }, (_, index) => {
-    return process.env[`TOMORROW_API_KEY_${index + 1}`];
-  }).filter((key): key is string => Boolean(key?.trim()));
+  const keys = Array.from(
+    { length: EXPECTED_API_KEYS },
+    (_, index) => {
+      const key =
+        process.env[`TOMORROW_API_KEY_${index + 1}`];
 
-  if (!keys.length) {
+      return key?.trim() || null;
+    },
+  );
+
+  const missing = keys
+    .map((key, index) =>
+      key ? null : `TOMORROW_API_KEY_${index + 1}`,
+    )
+    .filter((name): name is string => Boolean(name));
+
+  if (missing.length) {
     throw new Error(
-      "Nenhuma TOMORROW_API_KEY_1..6 foi configurada",
+      `Variáveis do Tomorrow.io ausentes: ${missing.join(", ")}`,
     );
   }
 
-  return keys;
+  return keys as string[];
 }
 
 function createKeyStates(): ApiKeyState[] {
@@ -99,10 +111,15 @@ function createKeyStates(): ApiKeyState[] {
   }));
 }
 
-function resetHourlyCounterIfNeeded(state: ApiKeyState) {
+function resetHourlyCounterIfNeeded(
+  state: ApiKeyState,
+) {
   const now = Date.now();
 
-  if (now - state.hourStartedAt >= 60 * 60 * 1000) {
+  if (
+    now - state.hourStartedAt >=
+    60 * 60 * 1000
+  ) {
     state.requestsThisHour = 0;
     state.hourStartedAt = now;
   }
@@ -124,7 +141,8 @@ function normalize(
   return {
     temperature: values.temperature ?? 0,
     humidity: values.humidity ?? 0,
-    precipitation: values.precipitationIntensity ?? 0,
+    precipitation:
+      values.precipitationIntensity ?? 0,
     precipitationProbability:
       values.precipitationProbability ?? 0,
     windSpeed: values.windSpeed ?? 0,
@@ -143,17 +161,25 @@ function buildTimeline(
   return intervals
     .slice(0, HOURS)
     .map((item) => ({
-      time: Date.parse(item.startTime ?? ""),
+      time: Date.parse(
+        item.startTime ?? "",
+      ),
       precipitation:
         item.values?.precipitationIntensity ?? 0,
       probability:
         item.values?.precipitationProbability ?? 0,
     }))
-    .filter((item) => Number.isFinite(item.time));
+    .filter((item) =>
+      Number.isFinite(item.time),
+    );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(
+  ms: number,
+): Promise<void> {
+  return new Promise((resolve) =>
+    setTimeout(resolve, ms),
+  );
 }
 
 async function requestTimeline(
@@ -167,22 +193,25 @@ async function requestTimeline(
   }, REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetch(TIMELINE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const response = await fetch(
+      TIMELINE_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          location: `${point.lat},${point.lon}`,
+          fields: TOMORROW_FIELDS,
+          timesteps: ["1h"],
+          startTime: "now",
+          endTime: "nowPlus12h",
+          units: "metric",
+          apikey: key,
+        }),
       },
-      signal: controller.signal,
-      body: JSON.stringify({
-        location: `${point.lat},${point.lon}`,
-        fields: TOMORROW_FIELDS,
-        timesteps: ["1h"],
-        startTime: "now",
-        endTime: "nowPlus12h",
-        units: "metric",
-        apikey: key,
-      }),
-    });
+    );
 
     if (!response.ok) {
       throw createTomorrowError(
@@ -208,86 +237,41 @@ async function requestTimeline(
   }
 }
 
-function selectKey(
-  states: ApiKeyState[],
-): ApiKeyState | null {
-  const available = states
-    .map((state) => {
-      resetHourlyCounterIfNeeded(state);
-      return state;
-    })
-    .filter(
-      (state) =>
-        state.requestsThisHour <
-        MAX_REQUESTS_PER_HOUR_PER_KEY,
-    );
-
-  if (!available.length) {
-    return null;
-  }
-
-  // Escolhe primeiro a key com menos requests.
-  // Em caso de empate, usa a que está há mais tempo sem ser usada.
-  available.sort((a, b) => {
-    if (a.requestsThisHour !== b.requestsThisHour) {
-      return (
-        a.requestsThisHour - b.requestsThisHour
-      );
-    }
-
-    return a.lastUsedAt - b.lastUsedAt;
-  });
-
-  return available[0];
-}
-
-async function waitForAvailableKey(
-  states: ApiKeyState[],
-): Promise<ApiKeyState> {
-  while (true) {
-    const key = selectKey(states);
-
-    if (key) {
-      return key;
-    }
-
-    const now = Date.now();
-
-    const nextReset = Math.min(
-      ...states.map(
-        (state) =>
-          state.hourStartedAt + 60 * 60 * 1000,
-      ),
-    );
-
-    const waitTime = Math.max(
-      1000,
-      nextReset - now,
-    );
-
-    await sleep(waitTime);
-  }
-}
-
-class TomorrowScheduler {
+class ApiKeyWorker {
   private lastRequestAt = 0;
 
   constructor(
-    private readonly states: ApiKeyState[],
+    private readonly state: ApiKeyState,
   ) {}
+
+  get keyIndex() {
+    return this.state.index;
+  }
 
   async execute(
     point: NeighborhoodPoint,
   ): Promise<WeatherTile> {
-    const state = await waitForAvailableKey(
-      this.states,
+    resetHourlyCounterIfNeeded(
+      this.state,
     );
+
+    if (
+      this.state.requestsThisHour >=
+      MAX_REQUESTS_PER_HOUR_PER_KEY
+    ) {
+      throw new Error(
+        `Key ${this.state.index} atingiu o limite operacional de ${MAX_REQUESTS_PER_HOUR_PER_KEY} requests/hora`,
+      );
+    }
 
     const now = Date.now();
 
-    const elapsed = now - this.lastRequestAt;
+    const elapsed =
+      now - this.lastRequestAt;
 
-    if (elapsed < REQUEST_INTERVAL_MS) {
+    if (
+      elapsed < REQUEST_INTERVAL_MS
+    ) {
       await sleep(
         REQUEST_INTERVAL_MS - elapsed,
       );
@@ -295,13 +279,18 @@ class TomorrowScheduler {
 
     this.lastRequestAt = Date.now();
 
-    state.requestsThisHour += 1;
-    state.lastUsedAt = Date.now();
+    this.state.requestsThisHour += 1;
+    this.state.lastUsedAt = Date.now();
 
-    const response = await requestTimeline(
-      point,
-      state.key,
+    console.log(
+      `[Tomorrow.io] Key ${this.state.index} → bairro ${point.id} (${this.state.requestsThisHour}/${MAX_REQUESTS_PER_HOUR_PER_KEY})`,
     );
+
+    const response =
+      await requestTimeline(
+        point,
+        this.state.key,
+      );
 
     const timelineData =
       response.data?.timelines?.[0];
@@ -309,10 +298,17 @@ class TomorrowScheduler {
     const intervals =
       timelineData?.intervals ?? [];
 
-    const firstInterval = intervals[0];
+    if (!intervals.length) {
+      throw createTomorrowError(
+        "Tomorrow.io não retornou intervalos para o bairro",
+      );
+    }
+
+    const firstInterval =
+      intervals[0];
 
     const timestamp = Date.parse(
-      firstInterval?.startTime ??
+      firstInterval.startTime ??
         new Date().toISOString(),
     );
 
@@ -322,26 +318,43 @@ class TomorrowScheduler {
       lat: point.lat,
       lon: point.lon,
       data: normalize(
-        firstInterval?.values ?? {},
+        firstInterval.values ?? {},
         timestamp,
       ),
-      timeline: buildTimeline(intervals),
+      timeline:
+        buildTimeline(intervals),
     };
   }
 }
 
-async function updateFirestore() {
-  const states = createKeyStates();
+function distributeNeighborhoods(
+  points: NeighborhoodPoint[],
+  states: ApiKeyState[],
+): NeighborhoodPoint[][] {
+  const groups = states.map(
+    () => [] as NeighborhoodPoint[],
+  );
 
-  const scheduler = new TomorrowScheduler(states);
+  points.forEach((point, index) => {
+    const groupIndex =
+      index % states.length;
 
-  const points = loadNeighborhoods();
+    groups[groupIndex].push(point);
+  });
 
+  return groups;
+}
+
+async function processKeyGroup(
+  worker: ApiKeyWorker,
+  points: NeighborhoodPoint[],
+): Promise<WeatherTile[]> {
   const results: WeatherTile[] = [];
 
   for (const point of points) {
     try {
-      const tile = await scheduler.execute(point);
+      const tile =
+        await worker.execute(point);
 
       results.push(tile);
     } catch (error) {
@@ -349,6 +362,10 @@ async function updateFirestore() {
         error instanceof Error
           ? error.message
           : "Falha ao consultar Tomorrow.io";
+
+      console.error(
+        `[Tomorrow.io] Key ${worker.keyIndex} falhou no bairro ${point.id}: ${message}`,
+      );
 
       results.push({
         id: point.id,
@@ -362,6 +379,12 @@ async function updateFirestore() {
     }
   }
 
+  return results;
+}
+
+async function saveResults(
+  results: WeatherTile[],
+) {
   const db = weatherDb();
 
   const batch = db.batch();
@@ -369,69 +392,224 @@ async function updateFirestore() {
   for (const tile of results) {
     batch.set(
       db
-        .collection(WEATHER_COLLECTION)
+        .collection(
+          WEATHER_COLLECTION,
+        )
         .doc(String(tile.id)),
       {
         ...tile,
-        updatedAt: FieldValue.serverTimestamp(),
+        updatedAt:
+          FieldValue.serverTimestamp(),
       },
     );
   }
 
   batch.set(
     db
-      .collection(WEATHER_META_COLLECTION)
+      .collection(
+        WEATHER_META_COLLECTION,
+      )
       .doc(WEATHER_META_DOCUMENT),
     {
-      updatedAt: FieldValue.serverTimestamp(),
-      neighborhoodCount: results.length,
+      updatedAt:
+        FieldValue.serverTimestamp(),
+      neighborhoodCount:
+        results.length,
       source: "tomorrow.io",
     },
   );
 
   await batch.commit();
+}
 
+async function sendRainAlerts(
+  results: WeatherTile[],
+) {
   const alerts = results
     .filter(
       (tile) =>
-        tile.timeline[0]?.precipitation > 0 ||
-        (tile.data?.precipitation ?? 0) > 0,
+        tile.timeline[0]
+          ?.precipitation > 0 ||
+        (tile.data?.precipitation ??
+          0) > 0,
     )
     .map((tile) => tile.name);
 
-  if (alerts.length) {
-    await sendDiscordAlert(
-      `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
-        ", ",
-      )}.
-       acesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
-    );
+  if (!alerts.length) {
+    return 0;
   }
 
-  return {
-    updated: results.length,
-    alerts: alerts.length,
-    keys: states.map((state) => ({
+  await sendDiscordAlert(
+    `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
+      ", ",
+    )}.
+accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
+  );
+
+  return alerts.length;
+}
+
+export async function runWeatherUpdate() {
+  const startedAt = Date.now();
+
+  console.log(
+    "[Weather Worker] Iniciando atualização meteorológica...",
+  );
+
+  const states =
+    createKeyStates();
+
+  const points =
+    loadNeighborhoods();
+
+  console.log(
+    `[Weather Worker] ${points.length} bairros encontrados.`,
+  );
+
+  console.log(
+    `[Weather Worker] ${states.length} keys disponíveis.`,
+  );
+
+  const groups =
+    distributeNeighborhoods(
+      points,
+      states,
+    );
+
+  groups.forEach(
+    (group, index) => {
+      console.log(
+        `[Weather Worker] Key ${index + 1}: ${group.length} bairros`,
+      );
+    },
+  );
+
+  const workers = states.map(
+    (state) =>
+      new ApiKeyWorker(state),
+  );
+
+  /*
+   * IMPORTANTE:
+   *
+   * Os 6 grupos começam simultaneamente.
+   *
+   * Cada grupo possui seu próprio scheduler
+   * de 3 requests/s.
+   *
+   * Portanto:
+   *
+   * Key 1 → 3 req/s
+   * Key 2 → 3 req/s
+   * Key 3 → 3 req/s
+   * Key 4 → 3 req/s
+   * Key 5 → 3 req/s
+   * Key 6 → 3 req/s
+   *
+   * Máximo teórico combinado:
+   * 18 req/s.
+   */
+  const groupedResults =
+    await Promise.all(
+      workers.map(
+        (worker, index) =>
+          processKeyGroup(
+            worker,
+            groups[index],
+          ),
+      ),
+    );
+
+  const results =
+    groupedResults.flat();
+
+  await saveResults(results);
+
+  const alerts =
+    await sendRainAlerts(
+      results,
+    );
+
+  const successful =
+    results.filter(
+      (tile) => tile.data !== null,
+    ).length;
+
+  const failed =
+    results.length - successful;
+
+  const duration =
+    Date.now() - startedAt;
+
+  const keyStats =
+    states.map((state) => ({
       key: state.index,
-      requests: state.requestsThisHour,
-    })),
+      requests:
+        state.requestsThisHour,
+    }));
+
+  console.log(
+    "[Weather Worker] Atualização concluída.",
+  );
+
+  console.log(
+    `[Weather Worker] Sucesso: ${successful}/${results.length}`,
+  );
+
+  console.log(
+    `[Weather Worker] Falhas: ${failed}`,
+  );
+
+  console.log(
+    `[Weather Worker] Duração: ${duration}ms`,
+  );
+
+  console.log(
+    "[Weather Worker] Uso das keys:",
+    keyStats,
+  );
+
+  return {
+    updated: successful,
+    failed,
+    alerts,
+    duration,
+    keys: keyStats,
   };
 }
 
 export async function refreshWeather(
   request: Request,
 ) {
-  if (!refreshSecretIsValid(request)) {
-    return new Response("Não autorizado", {
-      status: 401,
-    });
+  if (
+    !(
+      request.headers.get(
+        "authorization",
+      ) &&
+      request.headers.get(
+        "authorization",
+      ) ===
+        `Bearer ${process.env.WEATHER_REFRESH_SECRET}`
+    )
+  ) {
+    return new Response(
+      "Não autorizado",
+      {
+        status: 401,
+      },
+    );
   }
 
   try {
     return Response.json(
-      await updateFirestore(),
+      await runWeatherUpdate(),
     );
   } catch (error) {
+    console.error(
+      "[Weather Worker] Erro:",
+      error,
+    );
+
     return Response.json(
       {
         error:
@@ -449,31 +627,19 @@ export async function refreshWeather(
 export async function readWeather(): Promise<GridResponse> {
   const db = weatherDb();
 
-  let snapshot = await db
-    .collection(WEATHER_COLLECTION)
-    .get();
-
-  let tiles = snapshot.docs
-    .filter(
-      (doc) => doc.id !== WEATHER_META_DOCUMENT,
-    )
-    .map(
-      (doc) =>
-        serializeFirestore(
-          doc.data(),
-        ) as WeatherTile,
-    );
-
-  if (!tiles.length) {
-    await updateFirestore();
-
-    snapshot = await db
-      .collection(WEATHER_COLLECTION)
+  let snapshot =
+    await db
+      .collection(
+        WEATHER_COLLECTION,
+      )
       .get();
 
-    tiles = snapshot.docs
+  let tiles =
+    snapshot.docs
       .filter(
-        (doc) => doc.id !== WEATHER_META_DOCUMENT,
+        (doc) =>
+          doc.id !==
+          WEATHER_META_DOCUMENT,
       )
       .map(
         (doc) =>
@@ -481,23 +647,55 @@ export async function readWeather(): Promise<GridResponse> {
             doc.data(),
           ) as WeatherTile,
       );
+
+  if (!tiles.length) {
+    await runWeatherUpdate();
+
+    snapshot =
+      await db
+        .collection(
+          WEATHER_COLLECTION,
+        )
+        .get();
+
+    tiles =
+      snapshot.docs
+        .filter(
+          (doc) =>
+            doc.id !==
+            WEATHER_META_DOCUMENT,
+        )
+        .map(
+          (doc) =>
+            serializeFirestore(
+              doc.data(),
+            ) as WeatherTile,
+        );
   }
 
-  const meta = await db
-    .collection(WEATHER_META_COLLECTION)
-    .doc(WEATHER_META_DOCUMENT)
-    .get();
+  const meta =
+    await db
+      .collection(
+        WEATHER_META_COLLECTION,
+      )
+      .doc(
+        WEATHER_META_DOCUMENT,
+      )
+      .get();
 
-  const updateTimestamp = Number(
-    meta
-      .data()
-      ?.updatedAt?.toMillis?.() ??
-      Date.now(),
-  );
+  const updateTimestamp =
+    Number(
+      meta
+        .data()
+        ?.updatedAt
+        ?.toMillis?.() ??
+        Date.now(),
+    );
 
   const timeline =
     tiles.find(
-      (tile) => tile.timeline.length,
+      (tile) =>
+        tile.timeline.length,
     )?.timeline ?? [];
 
   return {
@@ -506,7 +704,8 @@ export async function readWeather(): Promise<GridResponse> {
     timestamp: Date.now(),
     updateTimestamp,
     nextUpdate:
-      updateTimestamp + 3600000,
+      updateTimestamp +
+      3600000,
     status: tiles.length
       ? tiles.some(
           (tile) => !tile.data,

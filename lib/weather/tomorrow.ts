@@ -4,26 +4,21 @@ import type { GridResponse, TimelinePoint, WeatherData, WeatherTile } from "./ty
 
 const TIMELINE_URL = "https://api.tomorrow.io/v4/timelines"
 const HOURS = 12
-const BATCH_SIZE = 3
-const BATCH_DELAY_MS = 1200
-const MAX_RETRIES = 3
+const MAX_REQUESTS_PER_SECOND = 3
+const MAX_REQUESTS_PER_HOUR = 25
+const MAX_REQUESTS_PER_DAY = 500
+const REQUEST_DELAY_MS = Math.ceil(1000 / MAX_REQUESTS_PER_SECOND)
+const RATE_LIMIT_ERROR = "Limite do Tomorrow.io atingido"
 
 function normalize(values: Record<string, number>, timestamp: number): WeatherData {
   return { temperature: values.temperature ?? values.temperatureApparent ?? 0, humidity: values.humidity ?? 0, precipitation: values.precipitationIntensity ?? 0, precipitationProbability: values.precipitationProbability ?? 0, windSpeed: values.windSpeed ?? 0, windDirection: values.windDirection ?? 0, cloudCover: values.cloudCover ?? 0, timestamp }
 }
 
 async function request(url: string, init?: RequestInit) {
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-    const response = await fetch(url, init)
-    if (response.ok) return response.json()
-    if (response.status !== 429 || attempt === MAX_RETRIES) {
-      throw new Error(`Tomorrow.io respondeu ${response.status}`)
-    }
-    const retryAfter = Number(response.headers.get("retry-after"))
-    const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : (attempt + 1) * 2500
-    await new Promise((resolve) => setTimeout(resolve, delay))
-  }
-  throw new Error("Falha ao consultar Tomorrow.io")
+  const response = await fetch(url, init)
+  if (response.ok) return response.json()
+  if (response.status === 429) throw new Error(RATE_LIMIT_ERROR)
+  throw new Error(`Tomorrow.io respondeu ${response.status}`)
 }
 
 function timeline(intervals: Array<{ startTime?: string; values?: Record<string, number> }>): TimelinePoint[] {
@@ -62,26 +57,56 @@ async function updateFirestore() {
   const db = weatherDb()
   const previous = await db.collection(WEATHER_COLLECTION).get()
   const previousById = new Map(previous.docs.map((doc) => [doc.id, serializeFirestore(doc.data()) as WeatherTile]))
-  const results: WeatherTile[] = []
-  let failed = 0
-
-  for (let index = 0; index < points.length; index += BATCH_SIZE) {
-    const batchPoints = points.slice(index, index + BATCH_SIZE)
-    const batchResults = await Promise.all(batchPoints.map(async (point) => {
-      try {
-        return await fetchNeighborhood(point, key)
-      } catch (error) {
-        failed += 1
-        return previousById.get(String(point.id)) ?? { id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: null, timeline: [], error: error instanceof Error ? error.message : "Falha" }
-      }
-    }))
-    results.push(...batchResults)
-    if (index + BATCH_SIZE < points.length) await wait(BATCH_DELAY_MS)
+  const metaRef = db.collection(WEATHER_META_COLLECTION).doc(WEATHER_META_DOCUMENT)
+  const metaSnapshot = await metaRef.get()
+  const meta = metaSnapshot.data() ?? {}
+  const now = Date.now()
+  const timestampMillis = (value: unknown) => {
+    if (typeof value === "number") return value
+    if (value && typeof (value as { toMillis?: () => number }).toMillis === "function") return (value as { toMillis: () => number }).toMillis()
+    return 0
   }
+  const hourStartedAt = timestampMillis(meta.hourStartedAt)
+  const dayStartedAt = timestampMillis(meta.dayStartedAt)
+  const hourRequests = hourStartedAt && now - hourStartedAt < 3600000 ? Number(meta.hourRequests ?? 0) : 0
+  const dayRequests = dayStartedAt && now - dayStartedAt < 86400000 ? Number(meta.dayRequests ?? 0) : 0
+  const cursor = Number(meta.cursor ?? 0) % Math.max(points.length, 1)
+  const requestBudget = Math.min(MAX_REQUESTS_PER_HOUR - hourRequests, MAX_REQUESTS_PER_DAY - dayRequests)
+  const selectedPoints = requestBudget > 0 ? Array.from({ length: Math.min(requestBudget, points.length) }, (_, index) => points[(cursor + index) % points.length]) : []
+  const resultsById = new Map(previousById)
+  let failed = 0
+  let requests = 0
+
+  for (const point of selectedPoints) {
+    try {
+      resultsById.set(String(point.id), await fetchNeighborhood(point, key))
+    } catch (error) {
+      failed += 1
+      const previousTile = previousById.get(String(point.id))
+      if (previousTile) resultsById.set(String(point.id), { ...previousTile, error: error instanceof Error ? error.message : "Falha" })
+    }
+    requests += 1
+    if (requests < selectedPoints.length) await wait(REQUEST_DELAY_MS)
+  }
+
+  const results = points.map((point) => resultsById.get(String(point.id)) ?? { id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: null, timeline: [], error: "Aguardando atualização" })
 
   const batch = db.batch()
   for (const tile of results) batch.set(db.collection(WEATHER_COLLECTION).doc(String(tile.id)), { ...tile, updatedAt: FieldValue.serverTimestamp() })
-  batch.set(db.collection(WEATHER_META_COLLECTION).doc(WEATHER_META_DOCUMENT), { updatedAt: FieldValue.serverTimestamp(), attemptedAt: FieldValue.serverTimestamp(), neighborhoodCount: results.length, failedCount: failed, source: "tomorrow.io" })
+  batch.set(metaRef, {
+    updatedAt: FieldValue.serverTimestamp(),
+    attemptedAt: FieldValue.serverTimestamp(),
+    neighborhoodCount: results.length,
+    failedCount: failed,
+    source: "tomorrow.io",
+    cursor: (cursor + requests) % Math.max(points.length, 1),
+    hourStartedAt: hourStartedAt && now - hourStartedAt < 3600000 ? hourStartedAt : now,
+    dayStartedAt: dayStartedAt && now - dayStartedAt < 86400000 ? dayStartedAt : now,
+    hourRequests: hourRequests + requests,
+    dayRequests: dayRequests + requests,
+    rateLimit: { requestsPerSecond: MAX_REQUESTS_PER_SECOND, requestsPerHour: MAX_REQUESTS_PER_HOUR, requestsPerDay: MAX_REQUESTS_PER_DAY },
+    rateLimited: failed > 0 && results.some((tile) => tile.error === RATE_LIMIT_ERROR),
+  })
   await batch.commit()
   const alerts = results.filter((tile) => tile.timeline[0]?.precipitation > 0 || (tile.data?.precipitation ?? 0) > 0).map((tile) => tile.name)
   if (alerts.length) await sendDiscordAlert(`JF Radar: chuva agora ou na próxima hora em ${alerts.join(", ")}.`)

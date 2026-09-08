@@ -1642,6 +1642,35 @@ async function updateMetadata(
   );
 }
 
+async function sendRainAlerts(
+  results: Map<string, WeatherTile>,
+) {
+  const alerts = Array.from(results.values())
+    .filter(
+      (tile) =>
+        tile.timeline[0]?.precipitation > 0 ||
+        (tile.data?.precipitation ?? 0) > 0,
+    )
+    .map((tile) => tile.name)
+    .filter(
+      (name): name is string =>
+        Boolean(name),
+    );
+
+  if (!alerts.length) {
+    return 0;
+  }
+
+  await sendDiscordAlert(
+    `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
+      ", ",
+    )}.
+accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
+  );
+
+  return alerts.length;
+}
+
 export async function runWeatherUpdate() {
   console.log(
     "[Weather Worker] Iniciando atualização meteorológica...",
@@ -1836,6 +1865,8 @@ export async function runWeatherUpdate() {
       results,
     );
 
+  const alerts = await sendRainAlerts(results);
+
   await updateMetadata(
     neighborhoods.length,
     updatedCount,
@@ -1866,6 +1897,8 @@ export async function runWeatherUpdate() {
     updatedCount,
 
     failedCount,
+
+    alerts,
 
     tiles:
       Array.from(

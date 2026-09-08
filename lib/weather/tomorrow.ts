@@ -7,7 +7,10 @@ import {
   serializeFirestore,
   weatherDb,
 } from "./firebase-admin";
-import { loadNeighborhoods, type NeighborhoodPoint } from "./neighborhoods";
+import {
+  loadNeighborhoods,
+  type NeighborhoodPoint,
+} from "./neighborhoods";
 import type {
   GridResponse,
   TimelinePoint,
@@ -15,23 +18,47 @@ import type {
   WeatherTile,
 } from "./types";
 
-const TIMELINE_URL = "https://api.tomorrow.io/v4/timelines";
+const TIMELINE_URL =
+  "https://api.tomorrow.io/v4/timelines";
 
 const HOURS = 12;
 
-// Cada API key pode fazer no máximo 3 requests por segundo.
-const MAX_REQUESTS_PER_SECOND_PER_KEY = 3;
-
-// Limite operacional definido para o projeto.
-const MAX_REQUESTS_PER_HOUR_PER_KEY = 20;
-
-// 334 ms garante <= 3 requests/s por key,
-// mantendo uma pequena margem de segurança.
-const REQUEST_INTERVAL_MS = 334;
+/*
+ * Não usamos mais 334ms como regra rígida.
+ *
+ * O limite real da conta/key é determinado pelo Tomorrow.io.
+ * Começamos de forma conservadora e deixamos o scheduler
+ * se adaptar aos 429.
+ */
+const INITIAL_REQUEST_INTERVAL_MS = 1000;
 
 const REQUEST_TIMEOUT_MS = 15000;
 
-const EXPECTED_API_KEYS = 6;
+const MAX_REQUESTS_PER_HOUR_PER_KEY = 20;
+
+const EXPECTED_API_KEYS = 8;
+
+/*
+ * Número máximo de tentativas do mesmo bairro.
+ *
+ * 429 pode trocar de key e voltar para a fila.
+ * 500/timeout também podem ser repetidos.
+ */
+const MAX_ATTEMPTS_PER_NEIGHBORHOOD = 4;
+
+/*
+ * Cooldown base para 429 quando o Tomorrow.io não
+ * fornece Retry-After.
+ */
+const RATE_LIMIT_COOLDOWN_MS = 5000;
+
+/*
+ * Cooldown máximo para evitar que uma key fique
+ * presa indefinidamente.
+ */
+const MAX_RATE_LIMIT_COOLDOWN_MS = 60000;
+
+const SERVER_ERROR_RETRY_BASE_MS = 2000;
 
 const TOMORROW_FIELDS = [
   "temperature",
@@ -40,6 +67,7 @@ const TOMORROW_FIELDS = [
   "dewPoint",
   "precipitationIntensity",
   "precipitationProbability",
+  "precipitationType",
   "windSpeed",
   "windDirection",
   "windGust",
@@ -52,9 +80,41 @@ const TOMORROW_FIELDS = [
 interface ApiKeyState {
   key: string;
   index: number;
+
   requestsThisHour: number;
   hourStartedAt: number;
-  lastUsedAt: number;
+
+  lastRequestAt: number;
+
+  /*
+   * Até esse timestamp a key não deve receber
+   * uma nova requisição.
+   */
+  cooldownUntil: number;
+
+  /*
+   * Número de 429 consecutivos.
+   */
+  consecutiveRateLimits: number;
+
+  /*
+   * Estatísticas para observabilidade.
+   */
+  successfulRequests: number;
+  failedRequests: number;
+  rateLimitResponses: number;
+
+  lastStatus?: number;
+
+  rateLimitLimitSecond?: string;
+  rateLimitRemainingSecond?: string;
+  rateLimitLimitHour?: string;
+  rateLimitRemainingHour?: string;
+}
+
+interface NeighborhoodJob {
+  point: NeighborhoodPoint;
+  attempts: number;
 }
 
 interface TomorrowTimelineResponse {
@@ -73,6 +133,7 @@ interface TomorrowTimelineResponse {
 
 interface TomorrowError extends Error {
   status?: number;
+  retryAfterMs?: number;
 }
 
 function getApiKeys(): string[] {
@@ -80,7 +141,9 @@ function getApiKeys(): string[] {
     { length: EXPECTED_API_KEYS },
     (_, index) => {
       const key =
-        process.env[`TOMORROW_API_KEY_${index + 1}`];
+        process.env[
+          `TOMORROW_API_KEY_${index + 1}`
+        ];
 
       return key?.trim() || null;
     },
@@ -88,13 +151,20 @@ function getApiKeys(): string[] {
 
   const missing = keys
     .map((key, index) =>
-      key ? null : `TOMORROW_API_KEY_${index + 1}`,
+      key
+        ? null
+        : `TOMORROW_API_KEY_${index + 1}`,
     )
-    .filter((name): name is string => Boolean(name));
+    .filter(
+      (name): name is string =>
+        Boolean(name),
+    );
 
   if (missing.length) {
     throw new Error(
-      `Variáveis do Tomorrow.io ausentes: ${missing.join(", ")}`,
+      `Variáveis do Tomorrow.io ausentes: ${missing.join(
+        ", ",
+      )}`,
     );
   }
 
@@ -102,13 +172,20 @@ function getApiKeys(): string[] {
 }
 
 function createKeyStates(): ApiKeyState[] {
-  return getApiKeys().map((key, index) => ({
-    key,
-    index: index + 1,
-    requestsThisHour: 0,
-    hourStartedAt: Date.now(),
-    lastUsedAt: 0,
-  }));
+  return getApiKeys().map(
+    (key, index) => ({
+      key,
+      index: index + 1,
+      requestsThisHour: 0,
+      hourStartedAt: Date.now(),
+      lastRequestAt: 0,
+      cooldownUntil: 0,
+      consecutiveRateLimits: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      rateLimitResponses: 0,
+    }),
+  );
 }
 
 function resetHourlyCounterIfNeeded(
@@ -122,16 +199,53 @@ function resetHourlyCounterIfNeeded(
   ) {
     state.requestsThisHour = 0;
     state.hourStartedAt = now;
+
+    console.log(
+      `[Tomorrow.io] Key ${state.index}: contador horário resetado.`,
+    );
   }
 }
 
 function createTomorrowError(
   message: string,
   status?: number,
+  retryAfterMs?: number,
 ): TomorrowError {
-  const error = new Error(message) as TomorrowError;
+  const error =
+    new Error(message) as TomorrowError;
+
   error.status = status;
+  error.retryAfterMs = retryAfterMs;
+
   return error;
+}
+
+function parseRetryAfter(
+  value: string | null,
+): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+
+  if (
+    Number.isFinite(seconds) &&
+    seconds >= 0
+  ) {
+    return seconds * 1000;
+  }
+
+  const date = Date.parse(value);
+
+  if (Number.isFinite(date)) {
+    return Math.max(
+      0,
+      date - Date.now(),
+    );
+  }
+
+  return undefined;
 }
 
 function normalize(
@@ -139,15 +253,27 @@ function normalize(
   timestamp: number,
 ): WeatherData {
   return {
-    temperature: values.temperature ?? 0,
-    humidity: values.humidity ?? 0,
+    temperature:
+      values.temperature ?? 0,
+
+    humidity:
+      values.humidity ?? 0,
+
     precipitation:
       values.precipitationIntensity ?? 0,
+
     precipitationProbability:
       values.precipitationProbability ?? 0,
-    windSpeed: values.windSpeed ?? 0,
-    windDirection: values.windDirection ?? 0,
-    cloudCover: values.cloudCover ?? 0,
+
+    windSpeed:
+      values.windSpeed ?? 0,
+
+    windDirection:
+      values.windDirection ?? 0,
+
+    cloudCover:
+      values.cloudCover ?? 0,
+
     timestamp,
   };
 }
@@ -164,10 +290,14 @@ function buildTimeline(
       time: Date.parse(
         item.startTime ?? "",
       ),
+
       precipitation:
-        item.values?.precipitationIntensity ?? 0,
+        item.values
+          ?.precipitationIntensity ?? 0,
+
       probability:
-        item.values?.precipitationProbability ?? 0,
+        item.values
+          ?.precipitationProbability ?? 0,
     }))
     .filter((item) =>
       Number.isFinite(item.time),
@@ -177,54 +307,89 @@ function buildTimeline(
 function sleep(
   ms: number,
 ): Promise<void> {
-  return new Promise((resolve) =>
-    setTimeout(resolve, ms),
+  return new Promise(
+    (resolve) =>
+      setTimeout(resolve, ms),
   );
 }
 
 async function requestTimeline(
   point: NeighborhoodPoint,
   key: string,
-): Promise<TomorrowTimelineResponse> {
-  const controller = new AbortController();
+): Promise<{
+  data: TomorrowTimelineResponse;
+  headers: Headers;
+}> {
+  const controller =
+    new AbortController();
 
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => {
+      controller.abort();
+    },
+    REQUEST_TIMEOUT_MS,
+  );
 
   try {
     const response = await fetch(
       TIMELINE_URL,
       {
         method: "POST",
+
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type":
+            "application/json",
         },
+
         signal: controller.signal,
+
         body: JSON.stringify({
           location: `${point.lat},${point.lon}`,
+
           fields: TOMORROW_FIELDS,
+
           timesteps: ["1h"],
+
           startTime: "now",
-          endTime: "nowPlus12h",
+
+          endTime:
+            "nowPlus12h",
+
           units: "metric",
+
           apikey: key,
         }),
       },
     );
 
     if (!response.ok) {
+      const retryAfterMs =
+        parseRetryAfter(
+          response.headers.get(
+            "Retry-After",
+          ),
+        );
+
       throw createTomorrowError(
         `Tomorrow.io respondeu ${response.status}`,
         response.status,
+        retryAfterMs,
       );
     }
 
-    return (await response.json()) as TomorrowTimelineResponse;
+    const data =
+      (await response.json()) as TomorrowTimelineResponse;
+
+    return {
+      data,
+      headers:
+        response.headers,
+    };
   } catch (error) {
     if (
       error instanceof Error &&
-      error.name === "AbortError"
+      error.name ===
+        "AbortError"
     ) {
       throw createTomorrowError(
         "Timeout ao consultar Tomorrow.io",
@@ -237,15 +402,101 @@ async function requestTimeline(
   }
 }
 
-class ApiKeyWorker {
-  private lastRequestAt = 0;
+function updateRateLimitHeaders(
+  state: ApiKeyState,
+  headers: Headers,
+) {
+  state.rateLimitLimitSecond =
+    headers.get(
+      "X-RateLimit-Limit-second",
+    ) ?? undefined;
 
+  state.rateLimitRemainingSecond =
+    headers.get(
+      "X-RateLimit-Remaining-second",
+    ) ?? undefined;
+
+  state.rateLimitLimitHour =
+    headers.get(
+      "X-RateLimit-Limit-hour",
+    ) ?? undefined;
+
+  state.rateLimitRemainingHour =
+    headers.get(
+      "X-RateLimit-Remaining-hour",
+    ) ?? undefined;
+}
+
+function calculateRateLimitCooldown(
+  state: ApiKeyState,
+  retryAfterMs?: number,
+): number {
+  if (
+    retryAfterMs !== undefined
+  ) {
+    return Math.min(
+      Math.max(
+        retryAfterMs,
+        RATE_LIMIT_COOLDOWN_MS,
+      ),
+      MAX_RATE_LIMIT_COOLDOWN_MS,
+    );
+  }
+
+  const multiplier = Math.max(
+    0,
+    state.consecutiveRateLimits - 1,
+  );
+
+  return Math.min(
+    RATE_LIMIT_COOLDOWN_MS *
+      Math.pow(2, multiplier),
+    MAX_RATE_LIMIT_COOLDOWN_MS,
+  );
+}
+
+class ApiKeyWorker {
   constructor(
     private readonly state: ApiKeyState,
   ) {}
 
   get keyIndex() {
     return this.state.index;
+  }
+
+  get available() {
+    resetHourlyCounterIfNeeded(
+      this.state,
+    );
+
+    return (
+      this.state.requestsThisHour <
+        MAX_REQUESTS_PER_HOUR_PER_KEY &&
+      Date.now() >=
+        this.state.cooldownUntil
+    );
+  }
+
+  get waitUntilAvailable() {
+    resetHourlyCounterIfNeeded(
+      this.state,
+    );
+
+    if (
+      this.state.requestsThisHour >=
+      MAX_REQUESTS_PER_HOUR_PER_KEY
+    ) {
+      return Infinity;
+    }
+
+    return Math.max(
+      0,
+      this.state.cooldownUntil -
+        Date.now(),
+      this.state.lastRequestAt +
+        INITIAL_REQUEST_INTERVAL_MS -
+        Date.now(),
+    );
   }
 
   async execute(
@@ -259,127 +510,420 @@ class ApiKeyWorker {
       this.state.requestsThisHour >=
       MAX_REQUESTS_PER_HOUR_PER_KEY
     ) {
-      throw new Error(
+      throw createTomorrowError(
         `Key ${this.state.index} atingiu o limite operacional de ${MAX_REQUESTS_PER_HOUR_PER_KEY} requests/hora`,
       );
     }
 
-    const now = Date.now();
-
-    const elapsed =
-      now - this.lastRequestAt;
+    const waitTime =
+      this.waitUntilAvailable;
 
     if (
-      elapsed < REQUEST_INTERVAL_MS
+      Number.isFinite(waitTime) &&
+      waitTime > 0
     ) {
-      await sleep(
-        REQUEST_INTERVAL_MS - elapsed,
-      );
+      await sleep(waitTime);
     }
 
-    this.lastRequestAt = Date.now();
+    /*
+     * O timestamp é atualizado ANTES do request.
+     * Assim, mesmo em 429, não disparamos
+     * imediatamente outro request nessa mesma key.
+     */
+    this.state.lastRequestAt =
+      Date.now();
 
     this.state.requestsThisHour += 1;
-    this.state.lastUsedAt = Date.now();
 
     console.log(
       `[Tomorrow.io] Key ${this.state.index} → bairro ${point.id} (${this.state.requestsThisHour}/${MAX_REQUESTS_PER_HOUR_PER_KEY})`,
     );
 
-    const response =
-      await requestTimeline(
-        point,
-        this.state.key,
+    try {
+      const response =
+        await requestTimeline(
+          point,
+          this.state.key,
+        );
+
+      updateRateLimitHeaders(
+        this.state,
+        response.headers,
       );
 
-    const timelineData =
-      response.data?.timelines?.[0];
+      this.state.successfulRequests +=
+        1;
 
-    const intervals =
-      timelineData?.intervals ?? [];
+      this.state.lastStatus = 200;
 
-    if (!intervals.length) {
-      throw createTomorrowError(
-        "Tomorrow.io não retornou intervalos para o bairro",
-      );
+      /*
+       * Uma resposta válida limpa o estado
+       * de rate limit da key.
+       */
+      this.state.consecutiveRateLimits =
+        0;
+
+      this.state.cooldownUntil = 0;
+
+      const timelineData =
+        response.data.data
+          ?.timelines?.[0];
+
+      const intervals =
+        timelineData?.intervals ?? [];
+
+      if (!intervals.length) {
+        throw createTomorrowError(
+          "Tomorrow.io não retornou intervalos para o bairro",
+        );
+      }
+
+      const firstInterval =
+        intervals[0];
+
+      const timestamp =
+        Date.parse(
+          firstInterval.startTime ??
+            new Date().toISOString(),
+        );
+
+      return {
+        id: point.id,
+
+        name: point.name,
+
+        lat: point.lat,
+
+        lon: point.lon,
+
+        data: normalize(
+          firstInterval.values ??
+            {},
+          timestamp,
+        ),
+
+        timeline:
+          buildTimeline(
+            intervals,
+          ),
+      };
+    } catch (error) {
+      if (
+        error instanceof Error
+      ) {
+        const tomorrowError =
+          error as TomorrowError;
+
+        this.state.lastStatus =
+          tomorrowError.status;
+
+        if (
+          tomorrowError.status ===
+          429
+        ) {
+          this.state.rateLimitResponses +=
+            1;
+
+          this.state.consecutiveRateLimits +=
+            1;
+
+          const cooldown =
+            calculateRateLimitCooldown(
+              this.state,
+              tomorrowError.retryAfterMs,
+            );
+
+          this.state.cooldownUntil =
+            Date.now() + cooldown;
+
+          console.warn(
+            `[Tomorrow.io] Key ${this.state.index} recebeu 429. Cooldown: ${cooldown}ms.`,
+          );
+
+          console.warn(
+            `[Tomorrow.io] Key ${this.state.index} headers:`,
+            {
+              secondLimit:
+                this.state
+                  .rateLimitLimitSecond,
+
+              secondRemaining:
+                this.state
+                  .rateLimitRemainingSecond,
+
+              hourLimit:
+                this.state
+                  .rateLimitLimitHour,
+
+              hourRemaining:
+                this.state
+                  .rateLimitRemainingHour,
+            },
+          );
+        }
+
+        this.state.failedRequests +=
+          1;
+      }
+
+      throw error;
     }
-
-    const firstInterval =
-      intervals[0];
-
-    const timestamp = Date.parse(
-      firstInterval.startTime ??
-        new Date().toISOString(),
-    );
-
-    return {
-      id: point.id,
-      name: point.name,
-      lat: point.lat,
-      lon: point.lon,
-      data: normalize(
-        firstInterval.values ?? {},
-        timestamp,
-      ),
-      timeline:
-        buildTimeline(intervals),
-    };
   }
 }
 
-function distributeNeighborhoods(
-  points: NeighborhoodPoint[],
-  states: ApiKeyState[],
-): NeighborhoodPoint[][] {
-  const groups = states.map(
-    () => [] as NeighborhoodPoint[],
+function createFailedTile(
+  job: NeighborhoodJob,
+  message: string,
+): WeatherTile {
+  return {
+    id: job.point.id,
+    name: job.point.name,
+    lat: job.point.lat,
+    lon: job.point.lon,
+    data: null,
+    timeline: [],
+    error: message,
+  };
+}
+
+async function processQueue(
+  jobs: NeighborhoodJob[],
+  workers: ApiKeyWorker[],
+): Promise<WeatherTile[]> {
+  const results =
+    new Map<
+      string,
+      WeatherTile
+    >();
+
+  /*
+   * Quantidade de workers realmente em
+   * execução neste momento.
+   */
+  let activeWorkers = 0;
+
+  async function workerLoop(
+    worker: ApiKeyWorker,
+  ) {
+    activeWorkers += 1;
+
+    try {
+      while (true) {
+        /*
+         * Procura o próximo job que ainda
+         * não terminou.
+         */
+        const jobIndex =
+          jobs.findIndex(
+            (job) =>
+              !results.has(
+                String(job.point.id),
+              ) &&
+              job.attempts <
+                MAX_ATTEMPTS_PER_NEIGHBORHOOD,
+          );
+
+        if (jobIndex === -1) {
+          break;
+        }
+
+        /*
+         * Se a key estiver em cooldown,
+         * esperamos somente o necessário.
+         */
+        const waitTime =
+          worker.waitUntilAvailable;
+
+        if (
+          !Number.isFinite(waitTime)
+        ) {
+          /*
+           * Esta key atingiu o limite
+           * horário. Não podemos usá-la.
+           */
+          break;
+        }
+
+        if (waitTime > 0) {
+          await sleep(waitTime);
+        }
+
+        /*
+         * Retira temporariamente o job da fila.
+         *
+         * Isso evita que outro worker pegue
+         * o mesmo bairro simultaneamente.
+         */
+        const job =
+          jobs[jobIndex];
+
+        if (
+          results.has(
+            String(job.point.id),
+          )
+        ) {
+          continue;
+        }
+
+        job.attempts += 1;
+
+        try {
+          const tile =
+            await worker.execute(
+              job.point,
+            );
+
+          results.set(
+            String(job.point.id),
+            tile,
+          );
+
+          console.log(
+            `[Tomorrow.io] Bairro ${job.point.id} concluído pela Key ${worker.keyIndex}.`,
+          );
+        } catch (error) {
+          const tomorrowError =
+            error instanceof Error
+              ? (error as TomorrowError)
+              : undefined;
+
+          const status =
+            tomorrowError?.status;
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Falha ao consultar Tomorrow.io";
+
+          /*
+           * 429:
+           *
+           * Não consideramos o bairro
+           * definitivamente perdido.
+           *
+           * Ele permanece na fila para
+           * outro worker/key.
+           */
+          if (
+            status === 429 &&
+            job.attempts <
+              MAX_ATTEMPTS_PER_NEIGHBORHOOD
+          ) {
+            console.warn(
+              `[Weather Worker] Bairro ${job.point.id} voltou para a fila após 429. Tentativa ${job.attempts}/${MAX_ATTEMPTS_PER_NEIGHBORHOOD}.`,
+            );
+
+            continue;
+          }
+
+          /*
+           * 500 e timeout:
+           * também recebem novas tentativas.
+           */
+          const retryable =
+            status === 500 ||
+            status === 502 ||
+            status === 503 ||
+            status === 504 ||
+            status === undefined;
+
+          if (
+            retryable &&
+            job.attempts <
+              MAX_ATTEMPTS_PER_NEIGHBORHOOD
+          ) {
+            const retryDelay =
+              Math.min(
+                SERVER_ERROR_RETRY_BASE_MS *
+                  Math.pow(
+                    2,
+                    job.attempts - 1,
+                  ),
+                MAX_RATE_LIMIT_COOLDOWN_MS,
+              );
+
+            console.warn(
+              `[Weather Worker] Bairro ${job.point.id}: ${message}. Retry em ${retryDelay}ms.`,
+            );
+
+            await sleep(
+              retryDelay,
+            );
+
+            continue;
+          }
+
+          /*
+           * 404 ou erro definitivo:
+           * encerra este bairro nesta execução.
+           */
+          console.error(
+            `[Weather Worker] Bairro ${job.point.id} falhou definitivamente: ${message}`,
+          );
+
+          results.set(
+            String(job.point.id),
+            createFailedTile(
+              job,
+              message,
+            ),
+          );
+        }
+      }
+    } finally {
+      activeWorkers -= 1;
+    }
+  }
+
+  /*
+   * Todos os workers começam juntos.
+   *
+   * Porém cada um controla sua própria
+   * key/cooldown.
+   */
+  await Promise.all(
+    workers.map(
+      (worker) =>
+        workerLoop(worker),
+    ),
   );
 
-  points.forEach((point, index) => {
-    const groupIndex =
-      index % states.length;
+  /*
+   * Se uma key atingiu 20/h e outras
+   * ainda possuem capacidade, os jobs
+   * restantes são processados por elas.
+   *
+   * Se todas atingirem o limite, os
+   * bairros restantes recebem erro.
+   */
+  for (const job of jobs) {
+    const id = String(
+      job.point.id,
+    );
 
-    groups[groupIndex].push(point);
-  });
-
-  return groups;
-}
-
-async function processKeyGroup(
-  worker: ApiKeyWorker,
-  points: NeighborhoodPoint[],
-): Promise<WeatherTile[]> {
-  const results: WeatherTile[] = [];
-
-  for (const point of points) {
-    try {
-      const tile =
-        await worker.execute(point);
-
-      results.push(tile);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Falha ao consultar Tomorrow.io";
-
-      console.error(
-        `[Tomorrow.io] Key ${worker.keyIndex} falhou no bairro ${point.id}: ${message}`,
-      );
-
-      results.push({
-        id: point.id,
-        name: point.name,
-        lat: point.lat,
-        lon: point.lon,
-        data: null,
-        timeline: [],
-        error: message,
-      });
+    if (results.has(id)) {
+      continue;
     }
+
+    results.set(
+      id,
+      createFailedTile(
+        job,
+        "Nenhuma API key disponível para concluir o bairro nesta execução.",
+      ),
+    );
   }
 
-  return results;
+  /*
+   * Mantém a mesma ordem dos bairros
+   * carregados do GeoJSON.
+   */
+  return jobs.map(
+    (job) =>
+      results.get(
+        String(job.point.id),
+      )!,
+  );
 }
 
 async function saveResults(
@@ -398,6 +942,7 @@ async function saveResults(
         .doc(String(tile.id)),
       {
         ...tile,
+
         updatedAt:
           FieldValue.serverTimestamp(),
       },
@@ -409,13 +954,18 @@ async function saveResults(
       .collection(
         WEATHER_META_COLLECTION,
       )
-      .doc(WEATHER_META_DOCUMENT),
+      .doc(
+        WEATHER_META_DOCUMENT,
+      ),
     {
       updatedAt:
         FieldValue.serverTimestamp(),
+
       neighborhoodCount:
         results.length,
-      source: "tomorrow.io",
+
+      source:
+        "tomorrow.io",
     },
   );
 
@@ -430,10 +980,12 @@ async function sendRainAlerts(
       (tile) =>
         tile.timeline[0]
           ?.precipitation > 0 ||
-        (tile.data?.precipitation ??
-          0) > 0,
+        (tile.data
+          ?.precipitation ?? 0) > 0,
     )
-    .map((tile) => tile.name);
+    .map(
+      (tile) => tile.name,
+    );
 
   if (!alerts.length) {
     return 0;
@@ -450,7 +1002,8 @@ accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
 }
 
 export async function runWeatherUpdate() {
-  const startedAt = Date.now();
+  const startedAt =
+    Date.now();
 
   console.log(
     "[Weather Worker] Iniciando atualização meteorológica...",
@@ -470,60 +1023,31 @@ export async function runWeatherUpdate() {
     `[Weather Worker] ${states.length} keys disponíveis.`,
   );
 
-  const groups =
-    distributeNeighborhoods(
-      points,
-      states,
+  const jobs: NeighborhoodJob[] =
+    points.map((point) => ({
+      point,
+      attempts: 0,
+    }));
+
+  const workers =
+    states.map(
+      (state) =>
+        new ApiKeyWorker(state),
     );
 
-  groups.forEach(
-    (group, index) => {
-      console.log(
-        `[Weather Worker] Key ${index + 1}: ${group.length} bairros`,
-      );
-    },
+  console.log(
+    "[Weather Worker] Iniciando fila global com 6 workers adaptativos.",
   );
-
-  const workers = states.map(
-    (state) =>
-      new ApiKeyWorker(state),
-  );
-
-  /*
-   * IMPORTANTE:
-   *
-   * Os 6 grupos começam simultaneamente.
-   *
-   * Cada grupo possui seu próprio scheduler
-   * de 3 requests/s.
-   *
-   * Portanto:
-   *
-   * Key 1 → 3 req/s
-   * Key 2 → 3 req/s
-   * Key 3 → 3 req/s
-   * Key 4 → 3 req/s
-   * Key 5 → 3 req/s
-   * Key 6 → 3 req/s
-   *
-   * Máximo teórico combinado:
-   * 18 req/s.
-   */
-  const groupedResults =
-    await Promise.all(
-      workers.map(
-        (worker, index) =>
-          processKeyGroup(
-            worker,
-            groups[index],
-          ),
-      ),
-    );
 
   const results =
-    groupedResults.flat();
+    await processQueue(
+      jobs,
+      workers,
+    );
 
-  await saveResults(results);
+  await saveResults(
+    results,
+  );
 
   const alerts =
     await sendRainAlerts(
@@ -532,11 +1056,13 @@ export async function runWeatherUpdate() {
 
   const successful =
     results.filter(
-      (tile) => tile.data !== null,
+      (tile) =>
+        tile.data !== null,
     ).length;
 
   const failed =
-    results.length - successful;
+    results.length -
+    successful;
 
   const duration =
     Date.now() - startedAt;
@@ -544,8 +1070,36 @@ export async function runWeatherUpdate() {
   const keyStats =
     states.map((state) => ({
       key: state.index,
+
       requests:
         state.requestsThisHour,
+
+      successful:
+        state.successfulRequests,
+
+      failed:
+        state.failedRequests,
+
+      rateLimits:
+        state.rateLimitResponses,
+
+      lastStatus:
+        state.lastStatus,
+
+      cooldownUntil:
+        state.cooldownUntil || null,
+
+      rateLimitLimitSecond:
+        state.rateLimitLimitSecond,
+
+      rateLimitRemainingSecond:
+        state.rateLimitRemainingSecond,
+
+      rateLimitLimitHour:
+        state.rateLimitLimitHour,
+
+      rateLimitRemainingHour:
+        state.rateLimitRemainingHour,
     }));
 
   console.log(
@@ -673,7 +1227,7 @@ export async function readWeather(): Promise<GridResponse> {
         );
   }
 
-  const meta =
+  const metaSnapshot =
     await db
       .collection(
         WEATHER_META_COLLECTION,
@@ -683,38 +1237,72 @@ export async function readWeather(): Promise<GridResponse> {
       )
       .get();
 
-  const updateTimestamp =
-    Number(
-      meta
-        .data()
-        ?.updatedAt
-        ?.toMillis?.() ??
-        Date.now(),
-    );
+  const meta = metaSnapshot.exists
+    ? serializeFirestore(
+        metaSnapshot.data(),
+      )
+    : null;
 
   const timeline =
-    tiles.find(
-      (tile) =>
-        tile.timeline.length,
-    )?.timeline ?? [];
+    tiles
+      .flatMap(
+        (tile) =>
+          tile.timeline ?? [],
+      )
+      .sort(
+        (a, b) =>
+          a.time - b.time,
+      );
+
+  const uniqueTimeline =
+    timeline.filter(
+      (item, index, array) =>
+        index ===
+        array.findIndex(
+          (other) =>
+            other.time ===
+            item.time,
+        ),
+    );
+
+  const updateTimestamp =
+    meta?.updatedAt
+      ? new Date(
+          meta.updatedAt,
+        ).getTime()
+      : 0;
 
   return {
     tiles,
-    timeline,
-    timestamp: Date.now(),
+
+    timeline:
+      uniqueTimeline,
+
+    timestamp:
+      Date.now(),
+
     updateTimestamp,
+
     nextUpdate:
       updateTimestamp +
-      3600000,
-    status: tiles.length
-      ? tiles.some(
-          (tile) => !tile.data,
-        )
-        ? "partial"
-        : "success"
-      : "error",
-    message: tiles.length
-      ? undefined
-      : "Nenhuma previsão armazenada",
+      60 * 60 * 1000,
+
+    status:
+      tiles.length === 0
+        ? "error"
+        : tiles.some(
+              (tile) =>
+                tile.data === null,
+            )
+          ? "partial"
+          : "success",
+
+    message:
+      tiles.some(
+        (tile) =>
+          tile.data === null,
+      )
+        ? "Alguns bairros não puderam ser atualizados."
+        : undefined,
   };
 }

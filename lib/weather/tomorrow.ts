@@ -1788,7 +1788,7 @@ export async function runWeatherUpdate() {
     );
 
     await sendDiscordAlert(
-      `⏳ Weather Worker: nenhuma API key disponível no momento. ${
+      `⏳ Weather Worker: Nenhuma API key disponível no momento. ${
         nextReset
           ? `Próximo reset estimado: ${formatBrazilDate(nextReset)} (horário de Brasília).`
           : ""

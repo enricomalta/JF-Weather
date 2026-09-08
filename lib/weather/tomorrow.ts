@@ -7,10 +7,12 @@ import {
   serializeFirestore,
   weatherDb,
 } from "./firebase-admin";
+
 import {
   loadNeighborhoods,
   type NeighborhoodPoint,
 } from "./neighborhoods";
+
 import type {
   GridResponse,
   TimelinePoint,
@@ -23,39 +25,14 @@ const TIMELINE_URL =
 
 const HOURS = 12;
 
-/*
- * Não usamos mais 334ms como regra rígida.
- *
- * O limite real da conta/key é determinado pelo Tomorrow.io.
- * Começamos de forma conservadora e deixamos o scheduler
- * se adaptar aos 429.
- */
 const INITIAL_REQUEST_INTERVAL_MS = 1000;
-
 const REQUEST_TIMEOUT_MS = 15000;
-
 const MAX_REQUESTS_PER_HOUR_PER_KEY = 20;
-
 const EXPECTED_API_KEYS = 8;
 
-/*
- * Número máximo de tentativas do mesmo bairro.
- *
- * 429 pode trocar de key e voltar para a fila.
- * 500/timeout também podem ser repetidos.
- */
 const MAX_ATTEMPTS_PER_NEIGHBORHOOD = 4;
 
-/*
- * Cooldown base para 429 quando o Tomorrow.io não
- * fornece Retry-After.
- */
 const RATE_LIMIT_COOLDOWN_MS = 5000;
-
-/*
- * Cooldown máximo para evitar que uma key fique
- * presa indefinidamente.
- */
 const MAX_RATE_LIMIT_COOLDOWN_MS = 60000;
 
 const SERVER_ERROR_RETRY_BASE_MS = 2000;
@@ -80,32 +57,15 @@ const TOMORROW_FIELDS = [
 interface ApiKeyState {
   key: string;
   index: number;
-
   requestsThisHour: number;
   hourStartedAt: number;
-
   lastRequestAt: number;
-
-  /*
-   * Até esse timestamp a key não deve receber
-   * uma nova requisição.
-   */
   cooldownUntil: number;
-
-  /*
-   * Número de 429 consecutivos.
-   */
   consecutiveRateLimits: number;
-
-  /*
-   * Estatísticas para observabilidade.
-   */
   successfulRequests: number;
   failedRequests: number;
   rateLimitResponses: number;
-
   lastStatus?: number;
-
   rateLimitLimitSecond?: string;
   rateLimitRemainingSecond?: string;
   rateLimitLimitHour?: string;
@@ -141,9 +101,7 @@ function getApiKeys(): string[] {
     { length: EXPECTED_API_KEYS },
     (_, index) => {
       const key =
-        process.env[
-          `TOMORROW_API_KEY_${index + 1}`
-        ];
+        process.env[`TOMORROW_API_KEY_${index + 1}`];
 
       return key?.trim() || null;
     },
@@ -382,14 +340,12 @@ async function requestTimeline(
 
     return {
       data,
-      headers:
-        response.headers,
+      headers: response.headers,
     };
   } catch (error) {
     if (
       error instanceof Error &&
-      error.name ===
-        "AbortError"
+      error.name === "AbortError"
     ) {
       throw createTomorrowError(
         "Timeout ao consultar Tomorrow.io",
@@ -493,6 +449,7 @@ class ApiKeyWorker {
       0,
       this.state.cooldownUntil -
         Date.now(),
+
       this.state.lastRequestAt +
         INITIAL_REQUEST_INTERVAL_MS -
         Date.now(),
@@ -525,11 +482,6 @@ class ApiKeyWorker {
       await sleep(waitTime);
     }
 
-    /*
-     * O timestamp é atualizado ANTES do request.
-     * Assim, mesmo em 429, não disparamos
-     * imediatamente outro request nessa mesma key.
-     */
     this.state.lastRequestAt =
       Date.now();
 
@@ -556,10 +508,6 @@ class ApiKeyWorker {
 
       this.state.lastStatus = 200;
 
-      /*
-       * Uma resposta válida limpa o estado
-       * de rate limit da key.
-       */
       this.state.consecutiveRateLimits =
         0;
 
@@ -589,11 +537,8 @@ class ApiKeyWorker {
 
       return {
         id: point.id,
-
         name: point.name,
-
         lat: point.lat,
-
         lon: point.lon,
 
         data: normalize(
@@ -671,6 +616,31 @@ class ApiKeyWorker {
   }
 }
 
+/**
+ * Busca um job que ainda não esteja sendo
+ * processado por outro worker.
+ */
+function getNextJob(
+  jobs: NeighborhoodJob[],
+  results: Map<string, WeatherTile>,
+  claimedJobs: Set<string>,
+): NeighborhoodJob | undefined {
+  const job = jobs.find((candidate) => {
+    const id = String(
+      candidate.point.id,
+    );
+
+    return (
+      !results.has(id) &&
+      !claimedJobs.has(id) &&
+      candidate.attempts <
+        MAX_ATTEMPTS_PER_NEIGHBORHOOD
+    );
+  });
+
+  return job;
+}
+
 function createFailedTile(
   job: NeighborhoodJob,
   message: string,
@@ -691,45 +661,54 @@ async function processQueue(
   workers: ApiKeyWorker[],
 ): Promise<WeatherTile[]> {
   const results =
-    new Map<
-      string,
-      WeatherTile
-    >();
+    new Map<string, WeatherTile>();
 
-  /*
-   * Quantidade de workers realmente em
-   * execução neste momento.
+  /**
+   * IMPORTANTE:
+   *
+   * Esse Set impede que dois workers
+   * peguem o mesmo bairro simultaneamente.
    */
-  let activeWorkers = 0;
+  const claimedJobs =
+    new Set<string>();
 
   async function workerLoop(
     worker: ApiKeyWorker,
   ) {
-    activeWorkers += 1;
+    while (true) {
+      /**
+       * Primeiro procura um bairro livre.
+       */
+      const job =
+        getNextJob(
+          jobs,
+          results,
+          claimedJobs,
+        );
 
-    try {
-      while (true) {
-        /*
-         * Procura o próximo job que ainda
-         * não terminou.
-         */
-        const jobIndex =
-          jobs.findIndex(
-            (job) =>
-              !results.has(
-                String(job.point.id),
-              ) &&
-              job.attempts <
-                MAX_ATTEMPTS_PER_NEIGHBORHOOD,
-          );
+      if (!job) {
+        break;
+      }
 
-        if (jobIndex === -1) {
-          break;
-        }
+      const jobId =
+        String(job.point.id);
 
-        /*
-         * Se a key estiver em cooldown,
-         * esperamos somente o necessário.
+      /**
+       * RESERVA IMEDIATAMENTE.
+       *
+       * Isso acontece antes de qualquer await.
+       * Portanto outro worker não consegue
+       * pegar o mesmo bairro.
+       */
+      claimedJobs.add(jobId);
+
+      job.attempts += 1;
+
+      try {
+        /**
+         * Se essa key estiver temporariamente
+         * indisponível, libera o bairro antes
+         * de esperar.
          */
         const waitTime =
           worker.waitUntilAvailable;
@@ -737,10 +716,7 @@ async function processQueue(
         if (
           !Number.isFinite(waitTime)
         ) {
-          /*
-           * Esta key atingiu o limite
-           * horário. Não podemos usá-la.
-           */
+          claimedJobs.delete(jobId);
           break;
         }
 
@@ -748,138 +724,142 @@ async function processQueue(
           await sleep(waitTime);
         }
 
-        /*
-         * Retira temporariamente o job da fila.
+        /**
+         * Depois do sleep, a key pode ter
+         * entrado em cooldown por outro motivo.
          *
-         * Isso evita que outro worker pegue
-         * o mesmo bairro simultaneamente.
+         * Se isso acontecer, libera o bairro
+         * para outro worker.
          */
-        const job =
-          jobs[jobIndex];
-
-        if (
-          results.has(
-            String(job.point.id),
-          )
-        ) {
+        if (!worker.available) {
+          claimedJobs.delete(jobId);
           continue;
         }
 
-        job.attempts += 1;
-
-        try {
-          const tile =
-            await worker.execute(
-              job.point,
-            );
-
-          results.set(
-            String(job.point.id),
-            tile,
+        const tile =
+          await worker.execute(
+            job.point,
           );
 
-          console.log(
-            `[Tomorrow.io] Bairro ${job.point.id} concluído pela Key ${worker.keyIndex}.`,
-          );
-        } catch (error) {
-          const tomorrowError =
-            error instanceof Error
-              ? (error as TomorrowError)
-              : undefined;
+        /**
+         * Só agora o bairro é considerado
+         * definitivamente concluído.
+         */
+        results.set(
+          jobId,
+          tile,
+        );
 
-          const status =
-            tomorrowError?.status;
+        claimedJobs.delete(
+          jobId,
+        );
 
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Falha ao consultar Tomorrow.io";
+        console.log(
+          `[Tomorrow.io] Bairro ${job.point.id} concluído pela Key ${worker.keyIndex}.`,
+        );
+      } catch (error) {
+        /**
+         * Libera o bairro imediatamente.
+         *
+         * Assim ele pode ser processado
+         * por outra key.
+         */
+        claimedJobs.delete(
+          jobId,
+        );
 
-          /*
-           * 429:
-           *
-           * Não consideramos o bairro
-           * definitivamente perdido.
-           *
-           * Ele permanece na fila para
-           * outro worker/key.
-           */
-          if (
-            status === 429 &&
-            job.attempts <
-              MAX_ATTEMPTS_PER_NEIGHBORHOOD
-          ) {
-            console.warn(
-              `[Weather Worker] Bairro ${job.point.id} voltou para a fila após 429. Tentativa ${job.attempts}/${MAX_ATTEMPTS_PER_NEIGHBORHOOD}.`,
-            );
+        const tomorrowError =
+          error instanceof Error
+            ? (error as TomorrowError)
+            : undefined;
 
-            continue;
-          }
+        const status =
+          tomorrowError?.status;
 
-          /*
-           * 500 e timeout:
-           * também recebem novas tentativas.
-           */
-          const retryable =
-            status === 500 ||
-            status === 502 ||
-            status === 503 ||
-            status === 504 ||
-            status === undefined;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Falha ao consultar Tomorrow.io";
 
-          if (
-            retryable &&
-            job.attempts <
-              MAX_ATTEMPTS_PER_NEIGHBORHOOD
-          ) {
-            const retryDelay =
-              Math.min(
-                SERVER_ERROR_RETRY_BASE_MS *
-                  Math.pow(
-                    2,
-                    job.attempts - 1,
-                  ),
-                MAX_RATE_LIMIT_COOLDOWN_MS,
-              );
-
-            console.warn(
-              `[Weather Worker] Bairro ${job.point.id}: ${message}. Retry em ${retryDelay}ms.`,
-            );
-
-            await sleep(
-              retryDelay,
-            );
-
-            continue;
-          }
-
-          /*
-           * 404 ou erro definitivo:
-           * encerra este bairro nesta execução.
-           */
-          console.error(
-            `[Weather Worker] Bairro ${job.point.id} falhou definitivamente: ${message}`,
+        /**
+         * 429:
+         *
+         * Não finaliza o bairro.
+         * Ele volta para a fila.
+         */
+        if (
+          status === 429 &&
+          job.attempts <
+            MAX_ATTEMPTS_PER_NEIGHBORHOOD
+        ) {
+          console.warn(
+            `[Weather Worker] Bairro ${job.point.id} voltou para a fila após 429. Tentativa ${job.attempts}/${MAX_ATTEMPTS_PER_NEIGHBORHOOD}.`,
           );
 
-          results.set(
-            String(job.point.id),
-            createFailedTile(
-              job,
-              message,
-            ),
-          );
+          continue;
         }
+
+        /**
+         * Erros temporários.
+         */
+        const retryable =
+          status === 500 ||
+          status === 502 ||
+          status === 503 ||
+          status === 504 ||
+          status === undefined;
+
+        if (
+          retryable &&
+          job.attempts <
+            MAX_ATTEMPTS_PER_NEIGHBORHOOD
+        ) {
+          const retryDelay =
+            Math.min(
+              SERVER_ERROR_RETRY_BASE_MS *
+                Math.pow(
+                  2,
+                  job.attempts - 1,
+                ),
+              MAX_RATE_LIMIT_COOLDOWN_MS,
+            );
+
+          console.warn(
+            `[Weather Worker] Bairro ${job.point.id}: ${message}. Retry em ${retryDelay}ms.`,
+          );
+
+          await sleep(
+            retryDelay,
+          );
+
+          continue;
+        }
+
+        /**
+         * Erro definitivo ou acabou o número
+         * máximo de tentativas.
+         *
+         * IMPORTANTE:
+         * esse resultado NÃO será gravado como
+         * data:null por cima do Firestore.
+         */
+        console.error(
+          `[Weather Worker] Bairro ${job.point.id} falhou definitivamente: ${message}`,
+        );
+
+        results.set(
+          jobId,
+          createFailedTile(
+            job,
+            message,
+          ),
+        );
       }
-    } finally {
-      activeWorkers -= 1;
     }
   }
 
-  /*
+  /**
    * Todos os workers começam juntos.
-   *
-   * Porém cada um controla sua própria
-   * key/cooldown.
    */
   await Promise.all(
     workers.map(
@@ -888,18 +868,14 @@ async function processQueue(
     ),
   );
 
-  /*
-   * Se uma key atingiu 20/h e outras
-   * ainda possuem capacidade, os jobs
-   * restantes são processados por elas.
-   *
-   * Se todas atingirem o limite, os
-   * bairros restantes recebem erro.
+  /**
+   * Qualquer bairro que não tenha sido
+   * concluído recebe um resultado de falha
+   * apenas para controle interno.
    */
   for (const job of jobs) {
-    const id = String(
-      job.point.id,
-    );
+    const id =
+      String(job.point.id);
 
     if (results.has(id)) {
       continue;
@@ -914,10 +890,6 @@ async function processQueue(
     );
   }
 
-  /*
-   * Mantém a mesma ordem dos bairros
-   * carregados do GeoJSON.
-   */
   return jobs.map(
     (job) =>
       results.get(
@@ -926,6 +898,17 @@ async function processQueue(
   );
 }
 
+/**
+ * Salva os resultados sem destruir
+ * dados válidos existentes.
+ *
+ * SUCESSO:
+ *   substitui os dados meteorológicos.
+ *
+ * FALHA:
+ *   mantém data/timeline antigas
+ *   e apenas marca naoVerificado.
+ */
 async function saveResults(
   results: WeatherTile[],
 ) {
@@ -934,21 +917,100 @@ async function saveResults(
   const batch = db.batch();
 
   for (const tile of results) {
-    batch.set(
-      db
-        .collection(
-          WEATHER_COLLECTION,
-        )
-        .doc(String(tile.id)),
-      {
-        ...tile,
+    const docRef = db
+      .collection(
+        WEATHER_COLLECTION,
+      )
+      .doc(String(tile.id));
 
-        updatedAt:
-          FieldValue.serverTimestamp(),
-      },
-    );
+    /**
+     * Não podemos fazer get() usando o mesmo
+     * batch. Primeiro buscamos o documento atual.
+     */
+    const existingSnapshot =
+      await docRef.get();
+
+    const existing =
+      existingSnapshot.exists
+        ? existingSnapshot.data()
+        : undefined;
+
+    const hasNewData =
+      tile.data !== null;
+
+    if (hasNewData) {
+      /**
+       * SUCESSO:
+       * grava os novos dados.
+       */
+      batch.set(
+        docRef,
+        {
+          ...tile,
+
+          naoVerificado: false,
+
+          lastError: null,
+
+          lastErrorStatus: null,
+
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {
+          merge: true,
+        },
+      );
+    } else {
+      /**
+       * FALHA:
+       *
+       * NÃO colocamos:
+       *
+       * data: null
+       * timeline: []
+       *
+       * Porque isso destruiria o último
+       * dado meteorológico válido.
+       */
+      batch.set(
+        docRef,
+        {
+          id: tile.id,
+          name:
+            existing?.name ??
+            tile.name,
+
+          lat:
+            existing?.lat ??
+            tile.lat,
+
+          lon:
+            existing?.lon ??
+            tile.lon,
+
+          naoVerificado: true,
+
+          lastError:
+            tile.error ??
+            "Falha ao consultar Tomorrow.io",
+
+          lastErrorStatus:
+            undefined,
+
+          lastErrorAt:
+            FieldValue.serverTimestamp(),
+        },
+        {
+          merge: true,
+        },
+      );
+    }
   }
 
+  /**
+   * Meta da execução.
+   */
   batch.set(
     db
       .collection(
@@ -966,6 +1028,9 @@ async function saveResults(
 
       source:
         "tomorrow.io",
+    },
+    {
+      merge: true,
     },
   );
 
@@ -995,7 +1060,8 @@ async function sendRainAlerts(
     `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
       ", ",
     )}.
-accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
+
+Accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
   );
 
   return alerts.length;
@@ -1036,7 +1102,7 @@ export async function runWeatherUpdate() {
     );
 
   console.log(
-    "[Weather Worker] Iniciando fila global com 6 workers adaptativos.",
+    `[Weather Worker] Iniciando fila global com ${workers.length} workers adaptativos.`,
   );
 
   const results =
@@ -1054,6 +1120,13 @@ export async function runWeatherUpdate() {
       results,
     );
 
+  /**
+   * Aqui "successful" significa que
+   * conseguimos dados novos nesta execução.
+   *
+   * Um bairro que possui dados antigos,
+   * mas falhou agora, não entra como sucesso.
+   */
   const successful =
     results.filter(
       (tile) =>
@@ -1068,39 +1141,42 @@ export async function runWeatherUpdate() {
     Date.now() - startedAt;
 
   const keyStats =
-    states.map((state) => ({
-      key: state.index,
+    states.map(
+      (state) => ({
+        key: state.index,
 
-      requests:
-        state.requestsThisHour,
+        requests:
+          state.requestsThisHour,
 
-      successful:
-        state.successfulRequests,
+        successful:
+          state.successfulRequests,
 
-      failed:
-        state.failedRequests,
+        failed:
+          state.failedRequests,
 
-      rateLimits:
-        state.rateLimitResponses,
+        rateLimits:
+          state.rateLimitResponses,
 
-      lastStatus:
-        state.lastStatus,
+        lastStatus:
+          state.lastStatus,
 
-      cooldownUntil:
-        state.cooldownUntil || null,
+        cooldownUntil:
+          state.cooldownUntil ||
+          null,
 
-      rateLimitLimitSecond:
-        state.rateLimitLimitSecond,
+        rateLimitLimitSecond:
+          state.rateLimitLimitSecond,
 
-      rateLimitRemainingSecond:
-        state.rateLimitRemainingSecond,
+        rateLimitRemainingSecond:
+          state.rateLimitRemainingSecond,
 
-      rateLimitLimitHour:
-        state.rateLimitLimitHour,
+        rateLimitLimitHour:
+          state.rateLimitLimitHour,
 
-      rateLimitRemainingHour:
-        state.rateLimitRemainingHour,
-    }));
+        rateLimitRemainingHour:
+          state.rateLimitRemainingHour,
+      }),
+    );
 
   console.log(
     "[Weather Worker] Atualização concluída.",
@@ -1181,14 +1257,23 @@ export async function refreshWeather(
 export async function readWeather(): Promise<GridResponse> {
   const db = weatherDb();
 
-  let snapshot =
+  /**
+   * IMPORTANTE:
+   *
+   * readWeather NÃO dispara mais
+   * runWeatherUpdate().
+   *
+   * Atualização meteorológica é responsabilidade
+   * exclusiva do cron.
+   */
+  const snapshot =
     await db
       .collection(
         WEATHER_COLLECTION,
       )
       .get();
 
-  let tiles =
+  const tiles =
     snapshot.docs
       .filter(
         (doc) =>
@@ -1202,31 +1287,6 @@ export async function readWeather(): Promise<GridResponse> {
           ) as WeatherTile,
       );
 
-  if (!tiles.length) {
-    await runWeatherUpdate();
-
-    snapshot =
-      await db
-        .collection(
-          WEATHER_COLLECTION,
-        )
-        .get();
-
-    tiles =
-      snapshot.docs
-        .filter(
-          (doc) =>
-            doc.id !==
-            WEATHER_META_DOCUMENT,
-        )
-        .map(
-          (doc) =>
-            serializeFirestore(
-              doc.data(),
-            ) as WeatherTile,
-        );
-  }
-
   const metaSnapshot =
     await db
       .collection(
@@ -1237,11 +1297,12 @@ export async function readWeather(): Promise<GridResponse> {
       )
       .get();
 
-  const meta = metaSnapshot.exists
-    ? serializeFirestore(
-        metaSnapshot.data(),
-      )
-    : null;
+  const meta =
+    metaSnapshot.exists
+      ? serializeFirestore(
+          metaSnapshot.data(),
+        )
+      : null;
 
   const timeline =
     tiles

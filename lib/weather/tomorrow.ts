@@ -1664,8 +1664,7 @@ async function sendRainAlerts(
   await sendDiscordAlert(
     `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
       ", ",
-    )}.
-accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
+    )}. Accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
   );
 
   return alerts.length;
@@ -1791,9 +1790,7 @@ export async function runWeatherUpdate() {
     await sendDiscordAlert(
       `⏳ Weather Worker: nenhuma API key disponível no momento. ${
         nextReset
-          ? `Próximo reset estimado: ${new Date(
-              nextReset,
-            ).toISOString()}.`
+          ? `Próximo reset estimado: ${formatBrazilDate(nextReset)} (horário de Brasília).`
           : ""
       }`,
     ).catch((error) => {
@@ -2090,4 +2087,18 @@ export async function readWeather(): Promise<GridResponse> {
           ? "Alguns bairros não foram verificados na última atualização."
           : undefined,
   });
+}
+
+
+function formatBrazilDate(timestamp: number | null) {
+  if (!timestamp) return "não definido";
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }

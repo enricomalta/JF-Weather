@@ -8,8 +8,8 @@ export interface WeatherData {
   cloudCover: number
   timestamp: number
 }
+export interface WeatherTile { lat: number; lon: number; data: WeatherData | null; error?: string }
 export interface TimelinePoint { time: number; precipitation: number; probability: number }
-export interface WeatherTile { id?: string; name?: string; lat: number; lon: number; data: WeatherData | null; timeline: TimelinePoint[]; error?: string }
 export interface GridResponse {
   tiles: WeatherTile[]
   timeline: TimelinePoint[]
@@ -20,7 +20,7 @@ export interface GridResponse {
   message?: string
 }
 export interface GeoBounds { north: number; south: number; east: number; west: number }
-export interface GeoFeature { type: 'Feature'; id?: string | number; geometry: { type: string; coordinates: any }; properties: Record<string, any> }
+export interface GeoFeature { type: 'Feature'; geometry: { type: string; coordinates: any }; properties: Record<string, any> }
 export interface GeoFeatureCollection { type: 'FeatureCollection'; features: GeoFeature[] }
 export interface CityMarker { name: string; lat: number; lon: number; state?: string; isCapital?: boolean; isFocus?: boolean }
 export interface CacheEntry<T> { data: T; timestamp: number; ttl: number }

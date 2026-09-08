@@ -2,18 +2,28 @@ import { FieldValue, WEATHER_COLLECTION, WEATHER_META_COLLECTION, WEATHER_META_D
 import { loadNeighborhoods, type NeighborhoodPoint } from "./neighborhoods"
 import type { GridResponse, TimelinePoint, WeatherData, WeatherTile } from "./types"
 
-const API_URL = "https://api.tomorrow.io/v4/weather/realtime"
 const TIMELINE_URL = "https://api.tomorrow.io/v4/timelines"
 const HOURS = 12
+const BATCH_SIZE = 3
+const BATCH_DELAY_MS = 1200
+const MAX_RETRIES = 3
 
 function normalize(values: Record<string, number>, timestamp: number): WeatherData {
   return { temperature: values.temperature ?? values.temperatureApparent ?? 0, humidity: values.humidity ?? 0, precipitation: values.precipitationIntensity ?? 0, precipitationProbability: values.precipitationProbability ?? 0, windSpeed: values.windSpeed ?? 0, windDirection: values.windDirection ?? 0, cloudCover: values.cloudCover ?? 0, timestamp }
 }
 
 async function request(url: string, init?: RequestInit) {
-  const response = await fetch(url, init)
-  if (!response.ok) throw new Error(`Tomorrow.io respondeu ${response.status}`)
-  return response.json()
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    const response = await fetch(url, init)
+    if (response.ok) return response.json()
+    if (response.status !== 429 || attempt === MAX_RETRIES) {
+      throw new Error(`Tomorrow.io respondeu ${response.status}`)
+    }
+    const retryAfter = Number(response.headers.get("retry-after"))
+    const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : (attempt + 1) * 2500
+    await new Promise((resolve) => setTimeout(resolve, delay))
+  }
+  throw new Error("Falha ao consultar Tomorrow.io")
 }
 
 function timeline(intervals: Array<{ startTime?: string; values?: Record<string, number> }>): TimelinePoint[] {
@@ -21,23 +31,57 @@ function timeline(intervals: Array<{ startTime?: string; values?: Record<string,
 }
 
 async function fetchNeighborhood(point: NeighborhoodPoint, key: string): Promise<WeatherTile> {
-  const [current, forecast] = await Promise.all([
-    request(`${API_URL}?location=${point.lat},${point.lon}&apikey=${encodeURIComponent(key)}&units=metric`),
-    request(TIMELINE_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: `${point.lat},${point.lon}`, fields: ["precipitationIntensity", "precipitationProbability"], timesteps: ["1h"], startTime: "now", endTime: "nowPlus12h", units: "metric", apikey: key }) }),
-  ])
-  const timestamp = Date.parse(current.data?.time ?? new Date().toISOString())
-  return { id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: normalize(current.data?.values ?? {}, timestamp), timeline: timeline(forecast.data?.timelines?.[0]?.intervals ?? []) }
+  const forecast = await request(TIMELINE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: `${point.lat},${point.lon}`,
+      fields: ["temperature", "humidity", "precipitationIntensity", "precipitationProbability", "windSpeed", "windDirection", "cloudCover"],
+      timesteps: ["current", "1h"],
+      startTime: "now",
+      endTime: "nowPlus12h",
+      units: "metric",
+      apikey: key,
+    }),
+  })
+  const source = forecast.data?.timelines?.[0]
+  const intervals = source?.intervals ?? []
+  const current = intervals[0]
+  const timestamp = Date.parse(current?.startTime ?? new Date().toISOString())
+  return { id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: normalize(current?.values ?? {}, timestamp), timeline: timeline(intervals.slice(1)) }
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function updateFirestore() {
   const key = process.env.TOMORROW_API_KEY
   if (!key) throw new Error("TOMORROW_API_KEY não configurada")
   const points = loadNeighborhoods()
-  const results = await Promise.all(points.map((point) => fetchNeighborhood(point, key).catch((error) => ({ id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: null, timeline: [], error: error instanceof Error ? error.message : "Falha" }))))
   const db = weatherDb()
+  const previous = await db.collection(WEATHER_COLLECTION).get()
+  const previousById = new Map(previous.docs.map((doc) => [doc.id, serializeFirestore(doc.data()) as WeatherTile]))
+  const results: WeatherTile[] = []
+  let failed = 0
+
+  for (let index = 0; index < points.length; index += BATCH_SIZE) {
+    const batchPoints = points.slice(index, index + BATCH_SIZE)
+    const batchResults = await Promise.all(batchPoints.map(async (point) => {
+      try {
+        return await fetchNeighborhood(point, key)
+      } catch (error) {
+        failed += 1
+        return previousById.get(String(point.id)) ?? { id: point.id, name: point.name, lat: point.lat, lon: point.lon, data: null, timeline: [], error: error instanceof Error ? error.message : "Falha" }
+      }
+    }))
+    results.push(...batchResults)
+    if (index + BATCH_SIZE < points.length) await wait(BATCH_DELAY_MS)
+  }
+
   const batch = db.batch()
   for (const tile of results) batch.set(db.collection(WEATHER_COLLECTION).doc(String(tile.id)), { ...tile, updatedAt: FieldValue.serverTimestamp() })
-  batch.set(db.collection(WEATHER_META_COLLECTION).doc(WEATHER_META_DOCUMENT), { updatedAt: FieldValue.serverTimestamp(), neighborhoodCount: results.length, source: "tomorrow.io" })
+  batch.set(db.collection(WEATHER_META_COLLECTION).doc(WEATHER_META_DOCUMENT), { updatedAt: FieldValue.serverTimestamp(), attemptedAt: FieldValue.serverTimestamp(), neighborhoodCount: results.length, failedCount: failed, source: "tomorrow.io" })
   await batch.commit()
   const alerts = results.filter((tile) => tile.timeline[0]?.precipitation > 0 || (tile.data?.precipitation ?? 0) > 0).map((tile) => tile.name)
   if (alerts.length) await sendDiscordAlert(`JF Radar: chuva agora ou na próxima hora em ${alerts.join(", ")}.`)

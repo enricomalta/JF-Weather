@@ -28,9 +28,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
  *
  * Portanto usamos no máximo 2 req/s por key.
  */
-const MAX_REQUESTS_PER_SECOND_PER_KEY = 2;
-
-const REQUEST_INTERVAL_MS = 2000 / MAX_REQUESTS_PER_SECOND_PER_KEY;
+const REQUEST_INTERVAL_MS = 2_200;
 
 /**
  * Limite operacional nosso por key.
@@ -43,7 +41,7 @@ const MAX_REQUESTS_PER_HOUR_PER_KEY = 20;
 /**
  * Número máximo de tentativas de um bairro.
  */
-const MAX_ATTEMPTS_PER_NEIGHBORHOOD = 4;
+const MAX_ATTEMPTS_PER_NEIGHBORHOOD = 2;
 
 /**
  * Cooldown inicial para 429 sem Retry-After.
@@ -1209,187 +1207,265 @@ class ApiKeyWorker {
 async function processQueue(
   jobs: WeatherJob[],
   workers: ApiKeyWorker[],
-): Promise<
-  Map<string, WeatherTile>
-> {
-  const results =
-    new Map<string, WeatherTile>();
+): Promise<Map<string, WeatherTile>> {
+  const results = new Map<string, WeatherTile>();
 
   const queue = [...jobs];
 
-  async function workerLoop(
-    worker: ApiKeyWorker,
-  ) {
-    while (true) {
-      if (queue.length === 0) {
-        return;
+  let workerIndex = 0;
+
+  /**
+   * Intervalo GLOBAL entre o início de cada requisição.
+   *
+   * Não existem mais 8 requisições simultâneas.
+   * Apenas uma chamada ao Tomorrow.io acontece por vez.
+   */
+  let nextRequestAt = 0;
+
+  while (queue.length > 0) {
+    /**
+     * Se todas as keys estiverem indisponíveis,
+     * não fazemos chamadas inúteis.
+     */
+    const availableWorkers = workers.filter(
+      (worker) =>
+        Number.isFinite(
+          worker.waitUntilAvailable,
+        ),
+    );
+
+    if (availableWorkers.length === 0) {
+      console.warn(
+        "[Tomorrow.io] Todas as API keys estão indisponíveis. Encerrando fila.",
+      );
+
+      break;
+    }
+
+    /**
+     * Procura a próxima key disponível
+     * seguindo ordem circular:
+     *
+     * Key 1 → Key 2 → ... → Key 8 → Key 1
+     */
+    let selectedWorker: ApiKeyWorker | undefined;
+
+    for (
+      let attempts = 0;
+      attempts < workers.length;
+      attempts += 1
+    ) {
+      const candidate =
+        workers[workerIndex];
+
+      workerIndex =
+        (workerIndex + 1) %
+        workers.length;
+
+      if (
+        Number.isFinite(
+          candidate.waitUntilAvailable,
+        )
+      ) {
+        selectedWorker = candidate;
+        break;
+      }
+    }
+
+    if (!selectedWorker) {
+      break;
+    }
+
+    /**
+     * Respeita o intervalo GLOBAL de 3 segundos
+     * entre o início das chamadas.
+     */
+    const now = Date.now();
+
+    const globalWait =
+      Math.max(
+        0,
+        nextRequestAt - now,
+      );
+
+    if (globalWait > 0) {
+      await sleep(globalWait);
+    }
+
+    /**
+     * Depois da espera global, a key pode ter
+     * entrado em cooldown. Nesse caso deixamos
+     * a próxima iteração escolher outra.
+     */
+    const keyWait =
+      selectedWorker.waitUntilAvailable;
+
+    if (!Number.isFinite(keyWait)) {
+      continue;
+    }
+
+    if (keyWait > 0) {
+      await sleep(keyWait);
+    }
+
+    /**
+     * Pega o próximo bairro.
+     */
+    const job = queue.shift();
+
+    if (!job) {
+      break;
+    }
+
+    const jobId =
+      String(job.point.id);
+
+    /**
+     * Evita processar novamente um bairro
+     * que já teve sucesso.
+     */
+    if (results.has(jobId)) {
+      continue;
+    }
+
+    if (
+      job.attempts >=
+      MAX_ATTEMPTS_PER_NEIGHBORHOOD
+    ) {
+      results.set(
+        jobId,
+        createFailedTile(
+          job.point,
+          `Número máximo de tentativas atingido (${MAX_ATTEMPTS_PER_NEIGHBORHOOD}).`,
+        ),
+      );
+
+      continue;
+    }
+
+    job.attempts += 1;
+
+    console.log(
+      `[Tomorrow.io] Key ${selectedWorker.keyIndex} → bairro ${job.point.id} (${job.attempts}/${MAX_ATTEMPTS_PER_NEIGHBORHOOD})`,
+    );
+
+    /**
+     * A próxima chamada só poderá começar
+     * depois de 3 segundos.
+     *
+     * Importante:
+     * o timestamp é atualizado ANTES da chamada,
+     * então o intervalo é contado entre inícios
+     * de requisições.
+     */
+    nextRequestAt =
+      Date.now() +
+      REQUEST_INTERVAL_MS;
+
+    try {
+      const tile =
+        await selectedWorker.execute(
+          job.point,
+        );
+
+      if (!results.has(jobId)) {
+        results.set(
+          jobId,
+          tile,
+        );
       }
 
-      const waitTime =
-        worker.waitUntilAvailable;
+      console.log(
+        `[Tomorrow.io] Bairro ${job.point.id} concluído pela Key ${selectedWorker.keyIndex}.`,
+      );
+    } catch (error) {
+      const status =
+        getStatus(error);
+
+      const message =
+        getErrorMessage(error);
 
       /**
-       * Key indisponível:
-       * outro worker continua.
+       * 429:
+       *
+       * O bairro volta para o final da fila.
+       * A próxima tentativa será feita por outra
+       * key, seguindo o rodízio.
        */
-      if (!Number.isFinite(waitTime)) {
-        return;
-      }
+      if (
+        status === 429 &&
+        job.attempts <
+          MAX_ATTEMPTS_PER_NEIGHBORHOOD
+      ) {
+        queue.push(job);
 
-      if (waitTime > 0) {
-        await sleep(
-          Math.min(
-            waitTime,
-            1_000,
-          ),
+        console.warn(
+          `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após 429.`,
         );
 
         continue;
       }
 
-      const job =
-        queue.shift();
+      /**
+       * Outros erros temporários.
+       */
+      if (
+        status !== undefined &&
+        RETRYABLE_STATUS_CODES.has(
+          status,
+        ) &&
+        job.attempts <
+          MAX_ATTEMPTS_PER_NEIGHBORHOOD
+      ) {
+        queue.push(job);
 
-      if (!job) {
-        return;
-      }
+        console.warn(
+          `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após HTTP ${status}.`,
+        );
 
-      const jobId =
-        String(job.point.id);
-
-      if (results.has(jobId)) {
         continue;
       }
 
+      /**
+       * Timeout / erro de rede.
+       */
       if (
-        job.attempts >=
-        MAX_ATTEMPTS_PER_NEIGHBORHOOD
+        status === undefined &&
+        job.attempts <
+          MAX_ATTEMPTS_PER_NEIGHBORHOOD
       ) {
+        queue.push(job);
+
+        console.warn(
+          `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após erro: ${message}`,
+        );
+
+        continue;
+      }
+
+      /**
+       * Falha definitiva.
+       */
+      if (!results.has(jobId)) {
         results.set(
           jobId,
           createFailedTile(
             job.point,
-            `Número máximo de tentativas atingido (${MAX_ATTEMPTS_PER_NEIGHBORHOOD}).`,
+            message,
+            status,
           ),
         );
-
-        continue;
       }
 
-      job.attempts += 1;
-
-      console.log(
-        `[Tomorrow.io] Key ${worker.keyIndex} → bairro ${job.point.id} (${job.attempts}/${MAX_ATTEMPTS_PER_NEIGHBORHOOD})`,
+      console.error(
+        `[Tomorrow.io] Bairro ${job.point.id} falhou definitivamente: ${message}`,
       );
-
-      try {
-        const tile =
-          await worker.execute(
-            job.point,
-          );
-
-        if (!results.has(jobId)) {
-          results.set(
-            jobId,
-            tile,
-          );
-        }
-
-        console.log(
-          `[Tomorrow.io] Bairro ${job.point.id} concluído pela Key ${worker.keyIndex}.`,
-        );
-      } catch (error) {
-        const status =
-          getStatus(error);
-
-        const message =
-          getErrorMessage(error);
-
-        /**
-         * 429 volta para a fila.
-         */
-        if (
-          status === 429 &&
-          job.attempts <
-            MAX_ATTEMPTS_PER_NEIGHBORHOOD
-        ) {
-          queue.push(job);
-
-          console.warn(
-            `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após 429.`,
-          );
-
-          continue;
-        }
-
-        /**
-         * Erros temporários.
-         */
-        if (
-          status !== undefined &&
-          RETRYABLE_STATUS_CODES.has(
-            status,
-          ) &&
-          job.attempts <
-            MAX_ATTEMPTS_PER_NEIGHBORHOOD
-        ) {
-          queue.push(job);
-
-          console.warn(
-            `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após HTTP ${status}.`,
-          );
-
-          continue;
-        }
-
-        /**
-         * Timeout/erro de rede.
-         */
-        if (
-          status === undefined &&
-          job.attempts <
-            MAX_ATTEMPTS_PER_NEIGHBORHOOD
-        ) {
-          queue.push(job);
-
-          console.warn(
-            `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após erro: ${message}`,
-          );
-
-          continue;
-        }
-
-        /**
-         * Falha definitiva.
-         */
-        if (!results.has(jobId)) {
-          results.set(
-            jobId,
-            createFailedTile(
-              job.point,
-              message,
-              status,
-            ),
-          );
-        }
-
-        console.error(
-          `[Tomorrow.io] Bairro ${job.point.id} falhou definitivamente: ${message}`,
-        );
-      }
     }
   }
 
-  await Promise.all(
-    workers.map(
-      (worker) =>
-        workerLoop(worker),
-    ),
-  );
-
   /**
    * Se as keys acabaram antes da fila,
-   * marcamos os restantes como falha da execução.
+   * marcamos os restantes como falha.
    */
   for (const job of jobs) {
     const id =
@@ -1844,7 +1920,7 @@ export async function runWeatherUpdate() {
     );
 
   console.log(
-    `[Weather Worker] Iniciando fila global com ${workers.length} workers adaptativos.`,
+    `[Weather Worker] Iniciando fila global sequencial com ${workers.length} keys. Intervalo entre requisições: ${REQUEST_INTERVAL_MS}ms.`,
   );
 
   const results =

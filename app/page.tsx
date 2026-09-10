@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { Crosshair, LocateFixed, Pause, Play, RefreshCw } from "lucide-react";
 import Image from "next/image";
+import type { RainViewerFrame } from "@/lib/weather/rainviewer";
+
 
 const WeatherMap = dynamic(
   () =>
@@ -57,6 +59,11 @@ export default function Page() {
   const [selectedTile, setSelectedTile] = useState<WeatherTile | null>(null);
   const [timelineIndex, setTimelineIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+
+  const [rainViewerFrames, setRainViewerFrames] = useState<RainViewerFrame[]>(
+    [],
+  );
+  const [rainViewerLoading, setRainViewerLoading] = useState(true);
   async function refresh(force = false) {
     setLoading(true);
     try {
@@ -90,22 +97,59 @@ export default function Page() {
   }
   useEffect(() => {
     refresh();
+
+    fetch("/api/weather/rainviewer", {
+      cache: "no-store",
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Falha ao carregar RainViewer.");
+        }
+
+        return response.json();
+      })
+      .then((result) => {
+        setRainViewerFrames(
+          Array.isArray(result.frames) ? result.frames : [],
+        );
+      })
+      .catch(() => {
+        setRainViewerFrames([]);
+      })
+      .finally(() => {
+        setRainViewerLoading(false);
+      });
   }, []);
-  const activeTimeline = selectedTile?.timeline?.length
+  const forecastTimeline = selectedTile?.timeline?.length
     ? selectedTile.timeline
     : data.timeline;
 
+  const activeTimeline = selected
+    ? forecastTimeline
+    : [];
+
+  const activeRadarFrame =
+    !selected && rainViewerFrames.length > 0
+      ? rainViewerFrames[timelineIndex] ?? rainViewerFrames[0]
+      : null;
+
+  const playbackLength = selected
+    ? activeTimeline.length
+    : rainViewerFrames.length;
+
   useEffect(() => {
-    if (!playing || activeTimeline.length < 2) return;
+    if (!playing || playbackLength < 2) return;
+
     const timer = window.setInterval(
       () =>
         setTimelineIndex((value) =>
-          value >= activeTimeline.length - 1 ? 0 : value + 1,
+          value >= playbackLength - 1 ? 0 : value + 1,
         ),
       900,
     );
+
     return () => window.clearInterval(timer);
-  }, [playing, activeTimeline.length]);
+  }, [playing, playbackLength]);
   const rain = selectedRain ?? data.tiles.find((tile) => tile.data)?.data ?? null;
   const currentPoint: TimelinePoint | null = activeTimeline[timelineIndex] ?? null;
   const status = loading
@@ -151,6 +195,7 @@ export default function Page() {
         <WeatherMap
           tiles={data.tiles}
           selected={selected}
+          rainViewerFrame={activeRadarFrame}
           onSelect={(name, tile) => {
             setSelected(name);
             setSelectedTile(tile);
@@ -237,17 +282,27 @@ export default function Page() {
         <div className="timeline">
           <div className="timeline-head">
             <div>
-              <span>PREVISÃO</span>
-              <b>
-                {currentPoint
-                  ? format(currentPoint.time)
-                  : "Sem previsão disponível"}
-              </b>
+              <span>{selected ? "PREVISÃO" : "RADAR"}</span>
+                <b>
+                  {selected
+                    ? currentPoint
+                      ? format(currentPoint.time)
+                      : "Sem previsão disponível"
+                    : activeRadarFrame
+                      ? format(activeRadarFrame.time * 1000)
+                      : "Sem radar disponível"}
+                </b>
             </div>
             <strong>
-              {currentPoint
-                ? `${currentPoint.precipitation.toFixed(1)} mm/h · ${currentPoint.probability}%`
-                : "Aguardando dados"}
+              {selected
+                ? currentPoint
+                  ? `${currentPoint.precipitation.toFixed(1)} mm/h · ${currentPoint.probability}%`
+                  : "Aguardando dados"
+                : activeRadarFrame
+                  ? "RADAR OBSERVADO"
+                  : rainViewerLoading
+                    ? "CARREGANDO RADAR"
+                    : "RADAR INDISPONÍVEL"}
             </strong>
           </div>
           {activeTimeline.length > 0 && (
@@ -289,6 +344,65 @@ export default function Page() {
                     {index === 0 ? "AGORA" : format(point.time)}
                   </span>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {playbackLength > 0 && (
+            <div className="video-timeline">
+              <div className="timeline-controls">
+                <button
+                  onClick={() => setPlaying((value) => !value)}
+                  aria-label={playing ? "Pausar" : "Reproduzir"}
+                >
+                  {playing ? <Pause size={15} /> : <Play size={15} />}
+                </button>
+
+                <span>{playing ? "REPRODUZINDO" : "PAUSADO"}</span>
+              </div>
+
+              <div className="timeline-track">
+                <div
+                  className="timeline-progress"
+                  style={{
+                    width: `${
+                      playbackLength > 1
+                        ? (timelineIndex / (playbackLength - 1)) * 100
+                        : 0
+                    }%`,
+                  }}
+                />
+
+                <input
+                  className="timeline-slider"
+                  type="range"
+                  min="0"
+                  max={playbackLength - 1}
+                  value={timelineIndex}
+                  onChange={(event) => {
+                    setPlaying(false);
+                    setTimelineIndex(Number(event.target.value));
+                  }}
+                  aria-label={
+                    selected
+                      ? "Selecionar horário da previsão"
+                      : "Selecionar horário do radar"
+                  }
+                />
+              </div>
+
+              <div className="timeline-scale">
+                {selected
+                  ? activeTimeline.map((point, index) => (
+                      <span key={point.time}>
+                        {index === 0 ? "AGORA" : format(point.time)}
+                      </span>
+                    ))
+                  : rainViewerFrames.map((frame) => (
+                      <span key={frame.time}>
+                        {format(frame.time * 1000)}
+                      </span>
+                    ))}
               </div>
             </div>
           )}

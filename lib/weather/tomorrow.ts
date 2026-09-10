@@ -1139,11 +1139,11 @@ class ApiKeyWorker {
 
           this.state.cooldownUntil = 0;
 
-          console.warn(
-            `[Tomorrow.io] Key ${this.state.keyIndex} esgotou a cota horária. Reset estimado para ${formatBrazilDate(
-              this.state.estimatedResetAt,
-            )}.`,
-          );
+          // console.warn(
+          //   `[Tomorrow.io] Key ${this.state.keyIndex} esgotou a cota horária. Reset estimado para ${formatBrazilDate(
+          //     this.state.estimatedResetAt,
+          //   )}.`,
+          // );
         } else {
           const cooldown =
             calculateRateLimitCooldown(
@@ -1154,9 +1154,9 @@ class ApiKeyWorker {
           this.state.cooldownUntil =
             Date.now() + cooldown;
 
-          console.warn(
-            `[Tomorrow.io] Key ${this.state.keyIndex} recebeu 429. Cooldown: ${cooldown}ms.`,
-          );
+          // console.warn(
+          //   `[Tomorrow.io] Key ${this.state.keyIndex} recebeu 429. Cooldown: ${cooldown}ms.`,
+          // );
         }
 
         await persistApiKeyState(
@@ -1179,9 +1179,9 @@ class ApiKeyWorker {
           this.state,
         );
 
-        console.warn(
-          `[Tomorrow.io] Key ${this.state.keyIndex} recebeu HTTP ${status}.`,
-        );
+        // console.warn(
+        //   `[Tomorrow.io] Key ${this.state.keyIndex} recebeu HTTP ${status}.`,
+        // );
 
         throw error;
       }
@@ -1549,10 +1549,10 @@ async function processQueue(
           worker.waitUntilAvailable,
         )
       ) {
-        console.warn(
-          `[Tomorrow.io] Key ${worker.keyIndex} indisponível. ` +
-            `Ela não continuará processando novos bairros nesta execução.`,
-        );
+        // console.warn(
+        //   `[Tomorrow.io] Key ${worker.keyIndex} indisponível. ` +
+        //     `Ela não continuará processando novos bairros nesta execução.`,
+        // );
 
         /**
          * O job volta para a fila para que outra key possa pegá-lo.
@@ -1604,9 +1604,9 @@ async function processQueue(
         ) {
           queue.push(job);
 
-          console.warn(
-            `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após 429.`,
-          );
+          // console.warn(
+          //   `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após 429.`,
+          // );
 
           continue;
         }
@@ -1623,9 +1623,9 @@ async function processQueue(
         ) {
           queue.push(job);
 
-          console.warn(
-            `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após HTTP ${status}.`,
-          );
+          // console.warn(
+          //   `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após HTTP ${status}.`,
+          // );
 
           continue;
         }
@@ -1640,9 +1640,9 @@ async function processQueue(
         ) {
           queue.push(job);
 
-          console.warn(
-            `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após erro: ${message}`,
-          );
+          // console.warn(
+          //   `[Tomorrow.io] Bairro ${job.point.id} voltou para a fila após erro: ${message}`,
+          // );
 
           continue;
         }
@@ -1702,7 +1702,7 @@ async function processQueue(
   }
 
   console.log(
-    `[Weather Worker] Processamento paralelo finalizado. ` +
+    `[Radar JF] Processamento paralelo finalizado. ` +
       `${results.size}/${jobs.length} bairros processados.`,
   );
 
@@ -1880,13 +1880,13 @@ async function saveResults(
   }
 
   console.log(
-    `[Weather Worker] Salvando ${tiles.size} resultados no Firestore...`,
+    `[Radar JF] Salvando ${tiles.size} resultados no Firestore...`,
   );
 
   await batch.commit();
 
   console.log(
-    `[Weather Worker] Firestore commit concluído. ${updatedCount} atualizados, ${failedCount} falhos.`,
+    `[Radar JF] Firestore commit concluído. ${updatedCount} atualizados, ${failedCount} falhos.`,
   );
 
   return {
@@ -1969,21 +1969,21 @@ async function sendRainAlerts(
 
 export async function runWeatherUpdate() {
   console.log(
-    "[Weather Worker] Iniciando atualização meteorológica...",
+    "[Radar JF] Iniciando atualização meteorológica...",
   );
 
   const neighborhoods =
     await loadNeighborhoods();
 
   console.log(
-    `[Weather Worker] ${neighborhoods.length} bairros encontrados.`,
+    `[Radar JF] ${neighborhoods.length} bairros encontrados.`,
   );
 
   const apiKeys =
     getTomorrowKeys();
 
   console.log(
-    `[Weather Worker] ${apiKeys.length} keys disponíveis.`,
+    `[Radar JF] ${apiKeys.length} keys disponíveis.`,
   );
 
   if (apiKeys.length === 0) {
@@ -2003,13 +2003,13 @@ export async function runWeatherUpdate() {
       apiKeys,
     );
 
-  console.log(
-    "[Weather Worker] Estado persistido das keys carregado.",
-  );
+  // console.log(
+  //   "[Radar JF] Estado persistido das keys carregado.",
+  // );
 
   for (const state of states) {
     // console.log(
-    //   `[Weather Worker] Key ${state.keyIndex}:`,
+    //   `[Radar JF] Key ${state.keyIndex}:`,
     //   {
     //     requestsThisHour:
     //       state.requestsThisHour,
@@ -2080,17 +2080,17 @@ export async function runWeatherUpdate() {
           )}.`
         : "Todas as API keys estão temporariamente indisponíveis.";
 
-    console.warn(`[Weather Worker] ${message}`);
+    console.warn(`[Radar JF] ${message}`);
 
     await sendDiscordAlert(
-      `⏳ Weather Worker: Nenhuma API key disponível no momento. ${
+      `⏳ Radar JF: Nenhuma API key disponível no momento. ${
         nextReset
           ? `Próximo reset estimado: ${formatBrazilDate(nextReset)} (horário de Brasília).`
           : ""
       }`,
     ).catch((error) => {
       console.error(
-        "[Weather Worker] Erro ao enviar alerta Discord:",
+        "[Radar JF] Erro ao enviar alerta Discord:",
         error,
       );
     });
@@ -2140,7 +2140,7 @@ export async function runWeatherUpdate() {
     );
 
   // console.log(
-  //   `[Weather Worker] Iniciando fila global sequencial com ${workers.length} keys. Intervalo entre requisições: ${REQUEST_INTERVAL_MS}ms.`,
+  //   `[Radar JF] Iniciando fila global sequencial com ${workers.length} keys. Intervalo entre requisições: ${REQUEST_INTERVAL_MS}ms.`,
   // );
 
   const results =
@@ -2166,15 +2166,15 @@ export async function runWeatherUpdate() {
   );
 
   console.log(
-    `[Weather Worker] Finalizado. ${updatedCount} bairros atualizados, ${failedCount} falharam.`,
+    `[Radar JF] Finalizado. ${updatedCount} bairros atualizados, ${failedCount} falharam.`,
   );
 
   if (failedCount > 0) {
     await sendDiscordAlert(
-      `⚠️ Weather Worker: ${updatedCount}/${neighborhoods.length} bairros atualizados. ${failedCount} falharam.`,
+      `⚠️ Radar JF: ${updatedCount}/${neighborhoods.length} bairros atualizados. ${failedCount} falharam.`,
     ).catch((error) => {
       console.error(
-        "[Weather Worker] Erro ao enviar alerta Discord:",
+        "[Radar JF] Erro ao enviar alerta Discord:",
         error,
       );
     });

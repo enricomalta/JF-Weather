@@ -174,7 +174,7 @@ button {
 .map-legend {
     position: absolute;
     left: 20px;
-    bottom: 20px;
+    bottom: 30px;
     width: 190px;
     padding: 10px 12px;
     background: #0b1a20;
@@ -598,51 +598,6 @@ button {
     gap: 10px;
 }
 
-@media(max-width:640px) {
-    .radar-header {
-        padding: 0 12px
-    }
-
-    .brand small {
-        display: none
-    }
-
-    .header-status {
-        font-size: 9px
-    }
-
-    .map-legend {
-        left: 10px;
-        bottom: 150px
-    }
-
-    .map-tools {
-        right: 10px;
-        bottom: 160px
-    }
-
-    .timeline {
-        left: 10px;
-        right: 10px;
-        bottom: 10px;
-        transform: none;
-        width: auto
-    }
-
-    .timeline-items {
-        gap: 3px
-    }
-
-    .timeline-items span {
-        font-size: 7px
-    }
-
-    .map-zoom {
-        right: 10px;
-        bottom: 110px
-    }
-}
-
 .radar-controls {
     display: flex;
     align-items: center;
@@ -711,8 +666,62 @@ button {
     box-shadow: 0 0 8px currentColor;
 }
 
+.dev-panel {
+    bottom: 5px;
+    left: 25px;
+    position: absolute;
+    z-index: 999;
+    font-size: 12px;
+}
+.dev-panel span {
+    margin-right: 10px;
+}
+
+
 @media(max-width:640px) {
-    .radar-controls {
+    .radar-header {
+        padding: 0 12px
+    }
+
+    .brand small {
+        display: none
+    }
+
+    .header-status {
+        font-size: 9px
+    }
+
+    .map-legend {
+        left: 10px;
+        bottom: 195px
+    }
+
+    .map-tools {
+        right: 10px;
+        bottom: 195px
+    }
+
+    .timeline {
+        left: 10px;
+        right: 10px;
+        bottom: 25px;
+        transform: none;
+        width: auto
+    }
+
+    .timeline-items {
+        gap: 3px
+    }
+
+    .timeline-items span {
+        font-size: 7px
+    }
+
+    .map-zoom {
+        right: 10px;
+        bottom: 110px
+    }
+        .radar-controls {
         gap: 8px;
     }
 

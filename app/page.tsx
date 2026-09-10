@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { Crosshair, LocateFixed, Pause, Play, RefreshCw } from "lucide-react";
 import Image from "next/image";
 import type { RainViewerFrame } from "@/lib/weather/rainviewer";
-
+import { doc, onSnapshot } from "firebase/firestore";
+import { clientDb } from "@/lib/firebase-client";
 
 const WeatherMap = dynamic(
   () =>
@@ -97,45 +98,47 @@ export default function Page() {
     }
   }
 
-  async function refreshRainViewer() {
-    try {
-      const response = await fetch("/api/weather/rainviewer", {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error("Falha ao carregar RainViewer.");
-      }
-
-      const result = await response.json();
-
-      const frames = Array.isArray(result.frames)
-        ? result.frames
-        : [];
-
-      setRainViewerFrames(frames);
-
-      if (frames.length > 0) {
-        setRadarIndex(frames.length - 1);
-      }
-    } catch {
-      // mantém o último histórico disponível em caso de falha
-    } finally {
-      setRainViewerLoading(false);
-    }
-  }
-  
 
   useEffect(() => {
     refresh();
-    refreshRainViewer();
 
-    const interval = window.setInterval(() => {
-      refreshRainViewer();
-    }, 13 * 60 * 1000);
+    const radarRef = doc(
+      clientDb,
+      "rainViewerHistory",
+      "juiz-de-fora",
+    );
 
-    return () => window.clearInterval(interval);
+    const unsubscribe = onSnapshot(
+      radarRef,
+      (snapshot) => {
+        const snapshotData = snapshot.data();
+
+        const frames = Array.isArray(snapshotData?.frames)
+          ? (snapshotData.frames as RainViewerFrame[])
+          : [];
+
+        setRainViewerFrames(frames);
+
+        if (frames.length > 0) {
+          setRadarIndex(frames.length - 1);
+        }
+
+        setRainViewerLoading(false);
+      },
+      (error) => {
+        console.error(
+          "[RainViewer] Listener Firestore:",
+          error,
+        );
+
+        setRainViewerLoading(false);
+      },
+    );
+
+    return () => unsubscribe();
   }, []);
+  
+
   const forecastTimeline = selectedTile?.timeline ?? [];
 
   const activeTimeline = selected

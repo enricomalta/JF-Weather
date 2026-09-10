@@ -387,6 +387,10 @@ button {
     background: #17262a
 }
 
+.leaflet-container *:focus {
+    outline: none !important;
+}
+
 .leaflet-container {
     font-family: Arial, sans-serif;
     touch-action: pan-x pan-y

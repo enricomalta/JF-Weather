@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  CircleMarker,
   GeoJSON,
   MapContainer,
   TileLayer,
@@ -16,16 +15,6 @@ import type { RainViewerFrame } from "@/lib/weather/rainviewer";
 
 
 const CENTER: [number, number] = [-21.76, -43.35];
-// const color = (value: number) =>
-//   value <= 0
-//     ? "#163d47"
-//     : value < 2.5
-//       ? "#39c6d8"
-//       : value < 7.6
-//         ? "#f0c84b"
-//         : "#ef6657";
-// const cloudOpacity = (value: number) =>
-//   value <= 0 ? 0 : value < 2.5 ? 0.92 : value < 7.6 ? 0.95 : 0.98;
 
 function ZoomEvents({ onZoom }: { onZoom: (zoom: number) => void }) {
   useMapEvents({ zoomend: (event) => onZoom(event.target.getZoom()) });

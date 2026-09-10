@@ -35,8 +35,8 @@ const empty: GridResponse = {
   status: "error",
   message: "Configure TOMORROW_API_KEY para iniciar o monitoramento.",
 };
-const CACHE_KEY = "jf-radar-grid-cache";
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_KEY = "jf-radar-cache-previsao";
+const CACHE_TTL = 1 * 60 * 60 * 1000; // 1 hora
 const format = (time: number) =>
   new Date(time).toLocaleTimeString("pt-BR", {
     hour: "2-digit",
@@ -187,7 +187,7 @@ export default function Page() {
   const detailProbability = currentPoint?.probability ?? rain?.precipitationProbability ?? 0;
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
 
-  const WEATHER_CACHE_KEY = "jf-radar-cache";
+  const WEATHER_CACHE_KEY = "jf-radar-cache-radar";
   const WEATHER_CACHE_TTL = 10 * 60 * 60 * 1000;
   const refreshWeather = async () => {
     try {

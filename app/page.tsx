@@ -191,7 +191,7 @@ export default function Page() {
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
 
   const WEATHER_CACHE_KEY = "jf-radar-cache-radar";
-  const WEATHER_CACHE_TTL = 10 * 60 * 60 * 1000;
+  const WEATHER_CACHE_TTL = 1 * 60 * 60 * 1000; // 1 hora
   const refreshWeather = async () => {
     try {
       const cached = localStorage.getItem(WEATHER_CACHE_KEY);
@@ -497,7 +497,7 @@ export default function Page() {
         <div className="dev-panel">
           <span>
             Desevolvido por: 
-            <a href="https://www.linkedin.com/in/enrico-malta1/" target="_blank">Enrico Malta</a>
+            <a href="https://www.linkedin.com/in/enrico-malta1/" target="_blank"> Enrico Malta</a>
           </span>
         </div>
       </section>

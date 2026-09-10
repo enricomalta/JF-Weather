@@ -346,11 +346,12 @@ button {
 
 .map-attribution {
     position: absolute;
-    right: 16px;
-    bottom: 16px;
+    right: 70px;
+    bottom: 0px;
     color: #75949a;
     font: 9px monospace;
-    letter-spacing: .02em
+    letter-spacing: .02em;
+    z-index: 999;
 }
 
 .map-zoom {
@@ -671,13 +672,13 @@ button {
     left: 25px;
     position: absolute;
     z-index: 999;
-    font-size: 12px;
+    font-size: 8px;
 }
 .dev-panel span {
     margin-right: 10px;
 }
 
-@media(max-width:900px) {
+@media(max-width:1024px) {
     .radar-header {
         padding: 0 12px
     }
@@ -747,6 +748,12 @@ button {
     .map-legend.timeline-open {
         bottom: 195px;
     }
+    .map-attribution {
+        font-size: 6px;
+    }
+    .dev-panel {
+        left: 10px;
+    }
 }
 
 @media(max-width:450px) {
@@ -757,7 +764,7 @@ button {
         width: 38px;
         height: 38px;
     }
-    .header-status {
-        font-size: 8.4px;
+    .map-attribution {
+        font-size: 5px;
     }
 }

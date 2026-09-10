@@ -2279,7 +2279,7 @@ export async function readWeather(): Promise<GridResponse> {
           doc.data() as StoredWeatherTile;
 
         return (
-          data.naoVerificado === true ||
+          // data.naoVerificado === true ||
           data.data === null
         );
       },

@@ -34,7 +34,7 @@ const empty: GridResponse = {
   updateTimestamp: 0,
   nextUpdate: 0,
   status: "error",
-  message: "Configure TOMORROW_API_KEY para iniciar o monitoramento.",
+  message: "Aguardando os dados para iniciar o monitoramento.",
 };
 const CACHE_KEY = "jf-radar-cache-previsao";
 const CACHE_TTL = 1 * 60 * 60 * 1000; // 1 hora
@@ -304,7 +304,7 @@ export default function Page() {
             setPlaying(false);
           }}
         />
-        <div className="map-tools">
+        <div className={`map-tools ${selected && forecastPlaybackLength > 0 ? "timeline-open" : ""}`}>
           <button
             onClick={() =>
               window.dispatchEvent(new CustomEvent("jf-map-center"))
@@ -315,11 +315,11 @@ export default function Page() {
             <LocateFixed size={17} />
           </button>
         </div>
-        <div className="map-legend">
+        <div className={`map-legend ${selected && forecastPlaybackLength > 0 ? "timeline-open" : ""}`}>
           <span>INTENSIDADE DA CHUVA</span>
           <i />
           <div>
-            <b>Sem chuva</b>
+            <b>Sem</b>
             <b>Fraca</b>
             <b>Moderada</b>
             <b>Forte</b>

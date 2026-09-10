@@ -57,7 +57,8 @@ export default function Page() {
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedRain, setSelectedRain] = useState<WeatherData | null>(null);
   const [selectedTile, setSelectedTile] = useState<WeatherTile | null>(null);
-  const [timelineIndex, setTimelineIndex] = useState(0);
+  const [radarIndex, setRadarIndex] = useState(0);
+  const [forecastIndex, setForecastIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
 
   const [rainViewerFrames, setRainViewerFrames] = useState<RainViewerFrame[]>(
@@ -108,9 +109,15 @@ export default function Page() {
 
       const result = await response.json();
 
-      setRainViewerFrames(
-        Array.isArray(result.frames) ? result.frames : [],
-      );
+      const frames = Array.isArray(result.frames)
+        ? result.frames
+        : [];
+
+      setRainViewerFrames(frames);
+
+      if (frames.length > 0) {
+        setRadarIndex(frames.length - 1);
+      }
     } catch {
       // mantém o último histórico disponível em caso de falha
     } finally {
@@ -136,29 +143,27 @@ export default function Page() {
     : [];
 
   const activeRadarFrame =
-    !selected && rainViewerFrames.length > 0
-      ? rainViewerFrames[timelineIndex] ?? rainViewerFrames[0]
+    rainViewerFrames.length > 0
+      ? rainViewerFrames[radarIndex] ??
+        rainViewerFrames[rainViewerFrames.length - 1]
       : null;
 
-  const playbackLength = selected
-    ? activeTimeline.length
-    : rainViewerFrames.length;
+  const forecastPlaybackLength = activeTimeline.length;
 
   useEffect(() => {
-    if (!playing || playbackLength < 2) return;
+    if (!playing || forecastPlaybackLength < 2) return;
 
-    const timer = window.setInterval(
-      () =>
-        setTimelineIndex((value) =>
-          value >= playbackLength - 1 ? 0 : value + 1,
-        ),
-      900,
-    );
+    const timer = window.setInterval(() => {
+      setForecastIndex((value) =>
+        value >= forecastPlaybackLength - 1 ? 0 : value + 1,
+      );
+    }, 900);
 
     return () => window.clearInterval(timer);
-  }, [playing, playbackLength]);
+  }, [playing, forecastPlaybackLength]);
   const rain = selectedRain ?? data.tiles.find((tile) => tile.data)?.data ?? null;
-  const currentPoint: TimelinePoint | null = activeTimeline[timelineIndex] ?? null;
+  const currentPoint: TimelinePoint | null =
+    activeTimeline[forecastIndex] ?? null;
   const radarLatestFrame =
     rainViewerFrames.length > 0
       ? rainViewerFrames[rainViewerFrames.length - 1]
@@ -292,7 +297,8 @@ export default function Page() {
             setSelected(name);
             setSelectedTile(tile);
             setSelectedRain(tile?.data ?? null);
-            setTimelineIndex(0);
+            setForecastIndex(0);
+            setPlaying(false);
           }}
         />
         <div className="map-tools">
@@ -325,12 +331,13 @@ export default function Page() {
         {selected && (
           <div className="place-panel">
             <button
-              onClick={() => {
-                setSelected(null);
-                setSelectedRain(null);
-                setSelectedTile(null);
-                setTimelineIndex(0);
-              }}
+                onClick={() => {
+                  setSelected(null);
+                  setSelectedRain(null);
+                  setSelectedTile(null);
+                  setForecastIndex(0);
+                  setPlaying(false);
+                }}
               aria-label="Fechar"
             >
               ×
@@ -385,7 +392,7 @@ export default function Page() {
                     : "RADAR INDISPONÍVEL"}
             </strong>
           </div>
-          {playbackLength > 0 && (
+          {forecastPlaybackLength > 0 && (
             <div className="video-timeline">
               <div className="timeline-controls">
                 <button
@@ -403,8 +410,8 @@ export default function Page() {
                   className="timeline-progress"
                   style={{
                     width: `${
-                      playbackLength > 1
-                        ? (timelineIndex / (playbackLength - 1)) * 100
+                      forecastPlaybackLength > 1
+                        ? (forecastIndex / (forecastPlaybackLength - 1)) * 100
                         : 0
                     }%`,
                   }}
@@ -414,8 +421,8 @@ export default function Page() {
                   className="timeline-slider"
                   type="range"
                   min="0"
-                  max={playbackLength - 1}
-                  value={timelineIndex}
+                  max={forecastPlaybackLength - 1}
+                  value={forecastIndex}
                   onChange={(event) => {
                     setPlaying(false);
                     setTimelineIndex(Number(event.target.value));

@@ -113,7 +113,7 @@ export function WeatherMap({
         <TileLayer
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        {!selected && rainViewerFrame && (
+        {rainViewerFrame && (
           <TileLayer
             key={rainViewerFrame.time}
             url={`${rainViewerFrame.url}/256/{z}/{x}/{y}/2/1_1.png`}

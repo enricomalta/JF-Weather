@@ -26,3 +26,14 @@ export interface CityMarker { name: string; lat: number; lon: number; state?: st
 export interface CacheEntry<T> { data: T; timestamp: number; ttl: number }
 export interface WeatherProviderConfig { apiKey: string; refreshInterval: number; cacheInterval: number; gridResolution: number }
 export interface ProviderStatus { isAvailable: boolean; lastUpdate?: number; nextUpdate?: number; error?: string }
+
+
+export interface RainViewerFrame {
+  time: number;
+  url: string;
+}
+
+export interface RainViewerHistory {
+  frames: RainViewerFrame[];
+  updatedAt: number;
+}

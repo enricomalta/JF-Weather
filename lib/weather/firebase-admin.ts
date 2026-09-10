@@ -19,6 +19,9 @@ export const WEATHER_COLLECTION = "weatherNeighborhoods"
 export const WEATHER_META_COLLECTION = "weatherUpdates"
 export const WEATHER_META_DOCUMENT = "latest"
 
+export const RAINVIEWER_COLLECTION = "rainViewerHistory";
+export const RAINVIEWER_DOCUMENT = "juiz-de-fora";
+
 export function refreshSecretIsValid(request: Request) {
   const header = request.headers.get("authorization")
   const expected = process.env.WEATHER_REFRESH_SECRET

@@ -41,7 +41,7 @@ const MAX_REQUESTS_PER_HOUR_PER_KEY = 20;
 /**
  * Número máximo de tentativas de um bairro.
  */
-const MAX_ATTEMPTS_PER_NEIGHBORHOOD = 2;
+const MAX_ATTEMPTS_PER_NEIGHBORHOOD = 1;
 
 /**
  * Cooldown inicial para 429 sem Retry-After.
@@ -379,26 +379,26 @@ function updateRateLimitHeaders(
     }
   }
 
-  console.log(
-    `[Tomorrow.io] Key ${state.keyIndex} headers:`,
-    {
-      secondLimit:
-        secondLimit ??
-        state.rateLimitSecond,
+  // console.log(
+  //   `[Tomorrow.io] Key ${state.keyIndex} headers:`,
+  //   {
+  //     secondLimit:
+  //       secondLimit ??
+  //       state.rateLimitSecond,
 
-      secondRemaining:
-        secondRemaining ??
-        state.rateLimitRemainingSecond,
+  //     secondRemaining:
+  //       secondRemaining ??
+  //       state.rateLimitRemainingSecond,
 
-      hourLimit:
-        hourLimit ??
-        state.rateLimitHour,
+  //     hourLimit:
+  //       hourLimit ??
+  //       state.rateLimitHour,
 
-      hourRemaining:
-        hourRemaining ??
-        state.rateLimitRemainingHour,
-    },
-  );
+  //     hourRemaining:
+  //       hourRemaining ??
+  //       state.rateLimitRemainingHour,
+  //   },
+  // );
 }
 
 /**
@@ -602,9 +602,9 @@ function resetHourlyStateIfNeeded(
 
     state.cooldownUntil = 0;
 
-    console.log(
-      `[Tomorrow.io] Key ${state.keyIndex} passou do reset estimado. Liberada para nova confirmação.`,
-    );
+    // console.log(
+    //   `[Tomorrow.io] Key ${state.keyIndex} passou do reset estimado. Liberada para nova confirmação.`,
+    // );
 
     return;
   }
@@ -632,9 +632,9 @@ function resetHourlyStateIfNeeded(
 
     state.cooldownUntil = 0;
 
-    console.log(
-      `[Tomorrow.io] Key ${state.keyIndex} iniciou nova janela local de hora.`,
-    );
+    // console.log(
+    //   `[Tomorrow.io] Key ${state.keyIndex} iniciou nova janela local de hora.`,
+    // );
   }
 }
 
@@ -1490,10 +1490,6 @@ async function processQueue(
     return results;
   }
 
-  console.log(
-    `[Weather Worker] Iniciando processamento paralelo com ${workers.length} keys. ` +
-      `Intervalo individual por key: ${REQUEST_INTERVAL_MS}ms.`,
-  );
 
   /**
    * Cada ApiKeyWorker possui seu próprio estado e seu
@@ -1585,9 +1581,9 @@ async function processQueue(
           results.set(jobId, tile);
         }
 
-        console.log(
-          `[Tomorrow.io] Bairro ${job.point.id} concluído pela Key ${worker.keyIndex}.`,
-        );
+        // console.log(
+        //   `[Tomorrow.io] Bairro ${job.point.id} concluído pela Key ${worker.keyIndex}.`,
+        // );
       } catch (error) {
         const status = getStatus(error);
         const message = getErrorMessage(error);
@@ -2012,26 +2008,26 @@ export async function runWeatherUpdate() {
   );
 
   for (const state of states) {
-    console.log(
-      `[Weather Worker] Key ${state.keyIndex}:`,
-      {
-        requestsThisHour:
-          state.requestsThisHour,
+    // console.log(
+    //   `[Weather Worker] Key ${state.keyIndex}:`,
+    //   {
+    //     requestsThisHour:
+    //       state.requestsThisHour,
 
-        hourRemaining:
-          state.rateLimitRemainingHour,
+    //     hourRemaining:
+    //       state.rateLimitRemainingHour,
 
-        hourExhausted:
-          state.hourExhausted,
+    //     hourExhausted:
+    //       state.hourExhausted,
 
-        estimatedResetAt:
-          state.estimatedResetAt
-            ? new Date(
-                state.estimatedResetAt,
-              ).toISOString()
-            : null,
-      },
-    );
+    //     estimatedResetAt:
+    //       state.estimatedResetAt
+    //         ? new Date(
+    //             state.estimatedResetAt,
+    //           ).toISOString()
+    //         : null,
+    //   },
+    // );
   }
 
   /**
@@ -2143,9 +2139,9 @@ export async function runWeatherUpdate() {
       }),
     );
 
-  console.log(
-    `[Weather Worker] Iniciando fila global sequencial com ${workers.length} keys. Intervalo entre requisições: ${REQUEST_INTERVAL_MS}ms.`,
-  );
+  // console.log(
+  //   `[Weather Worker] Iniciando fila global sequencial com ${workers.length} keys. Intervalo entre requisições: ${REQUEST_INTERVAL_MS}ms.`,
+  // );
 
   const results =
     await processQueue(

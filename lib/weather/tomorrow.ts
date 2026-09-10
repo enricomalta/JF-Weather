@@ -1961,7 +1961,7 @@ async function sendRainAlerts(
   await sendDiscordAlert(
     `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
       ", ",
-    )}. Accesse nossa plataforma para mais detalhes: https://jf-weather.vercel.app/`,
+    )}. Accesse nossa plataforma para mais detalhes: https://jf-radar.vercel.app/`,
   );
 
   return alerts.length;

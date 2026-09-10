@@ -492,7 +492,10 @@ export default function Page() {
         </div>
 
         <div className="dev-panel">
-          <span>Desevolvido por: <a href="https://www.linkedin.com/in/enrico-malta1/" target="_blank">Enrico Malta</a></span>
+          <span>
+            Desevolvido por: 
+            <a href="https://www.linkedin.com/in/enrico-malta1/" target="_blank">Enrico Malta</a>
+          </span>
         </div>
       </section>
     </main>

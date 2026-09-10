@@ -16,16 +16,16 @@ import type { RainViewerFrame } from "@/lib/weather/rainviewer";
 
 
 const CENTER: [number, number] = [-21.76, -43.35];
-const color = (value: number) =>
-  value <= 0
-    ? "#163d47"
-    : value < 2.5
-      ? "#39c6d8"
-      : value < 7.6
-        ? "#f0c84b"
-        : "#ef6657";
-const cloudOpacity = (value: number) =>
-  value <= 0 ? 0 : value < 2.5 ? 0.92 : value < 7.6 ? 0.95 : 0.98;
+// const color = (value: number) =>
+//   value <= 0
+//     ? "#163d47"
+//     : value < 2.5
+//       ? "#39c6d8"
+//       : value < 7.6
+//         ? "#f0c84b"
+//         : "#ef6657";
+// const cloudOpacity = (value: number) =>
+//   value <= 0 ? 0 : value < 2.5 ? 0.92 : value < 7.6 ? 0.95 : 0.98;
 
 function ZoomEvents({ onZoom }: { onZoom: (zoom: number) => void }) {
   useMapEvents({ zoomend: (event) => onZoom(event.target.getZoom()) });
@@ -157,27 +157,6 @@ export function WeatherMap({
             }}
           />
         )}
-        {tiles
-          .filter((tile) => tile.data && (tile.data.precipitation ?? 0) > 0)
-          .map((tile) => {
-            const value = tile.data?.precipitation ?? 0;
-            const tone = color(value);
-            return (
-              <CircleMarker
-                key={`${tile.lat}-${tile.lon}`}
-                center={[tile.lat, tile.lon]}
-                radius={Math.min(38, 20 + value * 3)}
-                pathOptions={{
-                  color: tone,
-                  fillColor: tone,
-                  fillOpacity: cloudOpacity(value),
-                  weight: 3,
-                  opacity: 1,
-                  bubblingMouseEvents: false,
-                }}
-              />
-            );
-          })}
         {zoom >= 15 && <></>}
       </MapContainer>
       <div className="map-attribution">

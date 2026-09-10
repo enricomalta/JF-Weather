@@ -638,3 +638,92 @@ button {
         bottom: 110px
     }
 }
+
+.radar-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.radar-time {
+    min-width: 58px;
+    text-align: center;
+    color: #d9edf0;
+    font: 700 15px monospace;
+    letter-spacing: .03em;
+}
+
+.radar-nav-button {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border: 1px solid #23444b;
+    background: #0b1a20;
+    color: #9fc2c7;
+    cursor: pointer;
+    font-size: 24px;
+    line-height: 1;
+}
+
+.radar-nav-button:hover:not(:disabled) {
+    border-color: #39c6d8;
+    color: #39c6d8;
+}
+
+.radar-nav-button:disabled {
+    opacity: .25;
+    cursor: default;
+}
+
+.radar-live-button {
+    height: 32px;
+    min-width: 96px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid #23444b;
+    background: #0b1a20;
+    color: #75949a;
+    cursor: pointer;
+    font: 9px monospace;
+    letter-spacing: .08em;
+}
+
+.radar-live-button:hover,
+.radar-live-button.active {
+    border-color: #ef6657;
+    color: #ef6657;
+}
+
+.radar-live-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 8px currentColor;
+}
+
+@media(max-width:640px) {
+    .radar-controls {
+        gap: 8px;
+    }
+
+    .radar-time {
+        min-width: 54px;
+        font-size: 14px;
+    }
+
+    .radar-nav-button {
+        width: 34px;
+        height: 34px;
+    }
+
+    .radar-live-button {
+        min-width: 92px;
+        height: 34px;
+    }
+}

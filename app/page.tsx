@@ -369,30 +369,69 @@ export default function Page() {
         <div className="timeline">
           <div className="timeline-head">
             <div>
-              <span>{selected ? "PREVISÃO" : "RADAR"}</span>
-                <b>
-                  {selected
-                    ? currentPoint
-                      ? format(currentPoint.time)
-                      : "Sem previsão disponível"
-                    : activeRadarFrame
-                      ? format(activeRadarFrame.time * 1000)
-                      : "Sem radar disponível"}
-                </b>
+              <span>RADAR</span>
             </div>
+
             <strong>
-              {selected
-                ? currentPoint
-                  ? `${currentPoint.precipitation.toFixed(1)} mm/h · ${currentPoint.probability}%`
-                  : "Aguardando dados"
-                : activeRadarFrame
-                  ? "RADAR OBSERVADO"
-                  : rainViewerLoading
-                    ? "CARREGANDO RADAR"
-                    : "RADAR INDISPONÍVEL"}
+              {activeRadarFrame
+                ? "RADAR OBSERVADO"
+                : rainViewerLoading
+                  ? "CARREGANDO RADAR"
+                  : "RADAR INDISPONÍVEL"}
             </strong>
           </div>
-          {forecastPlaybackLength > 0 && (
+
+          {rainViewerFrames.length > 0 && (
+            <div className="radar-controls">
+              <button
+                type="button"
+                className="radar-nav-button"
+                onClick={() => {
+                  setRadarIndex((value) => Math.max(0, value - 1));
+                }}
+                disabled={radarIndex === 0}
+                aria-label="Voltar 10 minutos"
+              >
+                ‹
+              </button>
+
+              <div className="radar-time">
+                {activeRadarFrame
+                  ? format(activeRadarFrame.time * 1000)
+                  : "--:--"}
+              </div>
+
+              <button
+                type="button"
+                className={`radar-live-button ${
+                  radarIndex === rainViewerFrames.length - 1 ? "active" : ""
+                }`}
+                onClick={() => {
+                  setRadarIndex(rainViewerFrames.length - 1);
+                }}
+                aria-label="Ir para o radar ao vivo"
+              >
+                <span className="radar-live-indicator" />
+                AO VIVO
+              </button>
+
+              <button
+                type="button"
+                className="radar-nav-button"
+                onClick={() => {
+                  setRadarIndex((value) =>
+                    Math.min(rainViewerFrames.length - 1, value + 1),
+                  );
+                }}
+                disabled={radarIndex === rainViewerFrames.length - 1}
+                aria-label="Avançar 10 minutos"
+              >
+                ›
+              </button>
+            </div>
+          )}
+
+          {selected && forecastPlaybackLength > 0 && (
             <div className="video-timeline">
               <div className="timeline-controls">
                 <button
@@ -425,7 +464,7 @@ export default function Page() {
                   value={forecastIndex}
                   onChange={(event) => {
                     setPlaying(false);
-                    setTimelineIndex(Number(event.target.value));
+                    setForecastIndex(Number(event.target.value));
                   }}
                   aria-label={
                     selected

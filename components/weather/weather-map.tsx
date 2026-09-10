@@ -12,6 +12,8 @@ import {
 import type { FeatureCollection } from "geojson";
 import type { GeoFeatureCollection, WeatherTile } from "@/lib/weather/types";
 import "leaflet/dist/leaflet.css";
+import type { RainViewerFrame } from "@/lib/weather/rainviewer";
+
 
 const CENTER: [number, number] = [-21.76, -43.35];
 const color = (value: number) =>
@@ -45,10 +47,12 @@ function Actions() {
 export function WeatherMap({
   tiles,
   selected,
+  rainViewerFrame,
   onSelect,
 }: {
   tiles: WeatherTile[];
   selected: string | null;
+  rainViewerFrame: RainViewerFrame | null;
   onSelect: (name: string, tile: WeatherTile | null) => void;
 }) {
   const [geo, setGeo] = useState<GeoFeatureCollection | null>(null);
@@ -109,6 +113,14 @@ export function WeatherMap({
         <TileLayer
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        {!selected && rainViewerFrame && (
+          <TileLayer
+            key={rainViewerFrame.time}
+            url={`${rainViewerFrame.url}/256/{z}/{x}/{y}/2/1_1.png`}
+            opacity={0.75}
+            maxNativeZoom={7}
+          />
+        )}
         <Actions />
         <ZoomEvents onZoom={setZoom} />
         {geo && (

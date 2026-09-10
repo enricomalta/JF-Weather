@@ -94,6 +94,14 @@ button {
     box-shadow: 0 0 10px var(--cyan)
 }
 
+.status-dot-red {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-red-500);
+    box-shadow: 0 0 10px var(--color-red-200)
+}
+
 .status-dot.offline {
     background: #d68a45;
     box-shadow: none
@@ -459,7 +467,7 @@ button {
     left: 50%;
     bottom: 16px;
     transform: translateX(-50%);
-    width: min(620px, calc(100% - 300px));
+    /* width: min(620px, calc(100% - 300px)); */
     padding: 12px 16px 10px;
     background-color: #071016 !important;
     opacity: 1 !important;

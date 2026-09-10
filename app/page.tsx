@@ -95,34 +95,41 @@ export default function Page() {
       setLoading(false);
     }
   }
+
+  async function refreshRainViewer() {
+    try {
+      const response = await fetch("/api/weather/rainviewer", {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Falha ao carregar RainViewer.");
+      }
+
+      const result = await response.json();
+
+      setRainViewerFrames(
+        Array.isArray(result.frames) ? result.frames : [],
+      );
+    } catch {
+      // mantém o último histórico disponível em caso de falha
+    } finally {
+      setRainViewerLoading(false);
+    }
+  }
+  
+
   useEffect(() => {
     refresh();
+    refreshRainViewer();
 
-    fetch("/api/weather/rainviewer", {
-      cache: "no-store",
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Falha ao carregar RainViewer.");
-        }
+    const interval = window.setInterval(() => {
+      refreshRainViewer();
+    }, 13 * 60 * 1000);
 
-        return response.json();
-      })
-      .then((result) => {
-        setRainViewerFrames(
-          Array.isArray(result.frames) ? result.frames : [],
-        );
-      })
-      .catch(() => {
-        setRainViewerFrames([]);
-      })
-      .finally(() => {
-        setRainViewerLoading(false);
-      });
+    return () => window.clearInterval(interval);
   }, []);
-  const forecastTimeline = selectedTile?.timeline?.length
-    ? selectedTile.timeline
-    : data.timeline;
+  const forecastTimeline = selectedTile?.timeline ?? [];
 
   const activeTimeline = selected
     ? forecastTimeline
@@ -152,14 +159,80 @@ export default function Page() {
   }, [playing, playbackLength]);
   const rain = selectedRain ?? data.tiles.find((tile) => tile.data)?.data ?? null;
   const currentPoint: TimelinePoint | null = activeTimeline[timelineIndex] ?? null;
+  const radarLatestFrame =
+    rainViewerFrames.length > 0
+      ? rainViewerFrames[rainViewerFrames.length - 1]
+      : null;
+
+  const radarUpdatedAt = radarLatestFrame
+    ? radarLatestFrame.time * 1000
+    : null;
+
+  const rainViewerLatestFrame =
+    rainViewerFrames.length > 0
+      ? rainViewerFrames[rainViewerFrames.length - 1]
+      : null;
+
   const status = loading
     ? "ATUALIZANDO…"
     : data.status === "error"
       ? "SERVIÇO INDISPONÍVEL"
-      : `ATUALIZADO ${format(data.updateTimestamp)}`;
+      : `PREVISÃO ATUALIZADO ${format(data.updateTimestamp)}`;
   const detailValue = currentPoint?.precipitation ?? rain?.precipitation ?? 0;
   const detailProbability = currentPoint?.probability ?? rain?.precipitationProbability ?? 0;
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
+
+  const WEATHER_CACHE_KEY = "jf-radar-cache";
+  const WEATHER_CACHE_TTL = 12 * 60 * 60 * 1000;
+  const refreshWeather = async () => {
+    try {
+      const cached = localStorage.getItem(WEATHER_CACHE_KEY);
+
+      if (cached) {
+        const parsed = JSON.parse(cached);
+
+        if (
+          parsed.timestamp &&
+          Date.now() - parsed.timestamp < WEATHER_CACHE_TTL &&
+          parsed.data
+        ) {
+          setData(parsed.data);
+          setLoading(false);
+          return;
+        }
+      }
+
+      setLoading(true);
+
+      const response = await fetch("/api/weather/grid", {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Falha ao carregar previsão.");
+      }
+
+      const weather = await response.json();
+
+      setData(weather);
+
+      localStorage.setItem(
+        WEATHER_CACHE_KEY,
+        JSON.stringify({
+          timestamp: Date.now(),
+          data: weather,
+        }),
+      );
+    } catch (error) {
+      console.error("[Weather] Falha ao carregar previsão:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    refreshWeather();
+  }, []);
+
   return (
     <main className="radar-shell">
       <header className="radar-header">
@@ -179,9 +252,28 @@ export default function Page() {
         </div>
         <div className="header-status">
           <span
-            className={`status-dot ${data.status === "error" ? "offline" : ""}`}
+            className={`status-dot ${
+              data.status === "error" ? "offline" : ""
+            }`}
           />
+
           {status}
+
+          {!rainViewerLoading && rainViewerLatestFrame && (
+            <>
+              <span className="status-dot-red"></span>
+
+              <span className="radar-live">
+                <span className="radar-live-dot" />
+                RADAR AO VIVO
+              </span>
+
+              <span className="radar-update">
+                {format(rainViewerLatestFrame.time * 1000)}
+              </span>
+            </>
+          )}
+
           <button
             className="icon-button"
             onClick={() => refresh(true)}
@@ -246,18 +338,6 @@ export default function Page() {
             <span>BAIRRO SELECIONADO</span>
             <strong>{selected}</strong>
             <div className="rain-detail">
-              {/* <b>
-                {selected
-                  ? selectedHasRain
-                    ? "Chuva prevista"
-                    : "Sem chuva"
-                  : rain
-                    ? rain.precipitation > 0 ||
-                      rain.precipitationProbability > 0
-                      ? "Chuva prevista"
-                      : "Sem chuva"
-                    : "Chuva sem observação"}
-              </b> */}
               <span>Intensidade: {intensity(detailValue)}</span>
               <span>
                 Precipitação:{" "}
@@ -305,49 +385,6 @@ export default function Page() {
                     : "RADAR INDISPONÍVEL"}
             </strong>
           </div>
-          {activeTimeline.length > 0 && (
-            <div className="video-timeline">
-              <div className="timeline-controls">
-                <button
-                  onClick={() => setPlaying((value) => !value)}
-                  aria-label={
-                    playing ? "Pausar previsão" : "Reproduzir previsão"
-                  }
-                >
-                  {playing ? <Pause size={15} /> : <Play size={15} />}
-                </button>
-                <span>{playing ? "REPRODUZINDO" : "PAUSADO"}</span>
-              </div>
-              <div className="timeline-track">
-                <div
-                  className="timeline-progress"
-                  style={{
-                    width: `${activeTimeline.length > 1 ? (timelineIndex / (activeTimeline.length - 1)) * 100 : 0}%`,
-                  }}
-                />
-                <input
-                  className="timeline-slider"
-                  type="range"
-                  min="0"
-                  max={activeTimeline.length - 1}
-                  value={timelineIndex}
-                  onChange={(event) => {
-                    setPlaying(false);
-                    setTimelineIndex(Number(event.target.value));
-                  }}
-                  aria-label="Selecionar horário da previsão"
-                />
-              </div>
-              <div className="timeline-scale">
-                {activeTimeline.map((point, index) => (
-                  <span key={point.time}>
-                    {index === 0 ? "AGORA" : format(point.time)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
           {playbackLength > 0 && (
             <div className="video-timeline">
               <div className="timeline-controls">

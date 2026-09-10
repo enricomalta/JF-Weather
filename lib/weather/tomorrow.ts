@@ -782,29 +782,20 @@ async function requestTimeline(
       TOMORROW_BASE_URL,
       {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json",
+          "Accept": "application/json",
+          "apikey": apiKey,
         },
-
         body: JSON.stringify({
           location: `${point.lat},${point.lon}`,
-
           fields: TIMELINE_FIELDS,
-
           timesteps: TIMESTEPS,
-
           startTime: "now",
-
           endTime: "nowPlus12h",
-
           units: "metric",
-
-          apikey: apiKey,
         }),
-
         signal: controller.signal,
-
         cache: "no-store",
       },
     );
@@ -1149,9 +1140,9 @@ class ApiKeyWorker {
           this.state.cooldownUntil = 0;
 
           console.warn(
-            `[Tomorrow.io] Key ${this.state.keyIndex} esgotou a cota horária. Reset estimado para ${new Date(
+            `[Tomorrow.io] Key ${this.state.keyIndex} esgotou a cota horária. Reset estimado para ${formatBrazilDate(
               this.state.estimatedResetAt,
-            ).toISOString()}.`,
+            )}.`,
           );
         } else {
           const cooldown =
@@ -1853,14 +1844,12 @@ export async function runWeatherUpdate() {
 
     const message =
       nextReset
-        ? `Todas as API keys estão temporariamente indisponíveis. Próximo reset estimado: ${new Date(
+        ? `Todas as API keys estão temporariamente indisponíveis. Próximo reset estimado: ${formatBrazilDate(
             nextReset,
-          ).toISOString()}.`
+          )}.`
         : "Todas as API keys estão temporariamente indisponíveis.";
 
-    console.warn(
-      `[Weather Worker] ${message}`,
-    );
+    console.warn(`[Weather Worker] ${message}`);
 
     await sendDiscordAlert(
       `⏳ Weather Worker: Nenhuma API key disponível no momento. ${

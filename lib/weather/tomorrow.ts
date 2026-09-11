@@ -1084,9 +1084,9 @@ class ApiKeyWorker {
         this.state,
       );
 
-      console.log(
-        `[Tomorrow.io] Key ${this.state.keyIndex} → bairro ${point.id} sucesso.`,
-      );
+      // console.log(
+      //   `[Tomorrow.io] Key ${this.state.keyIndex} → bairro ${point.id} sucesso.`,
+      // );
 
       return normalizeTimelineResponse(
         point,
@@ -1564,10 +1564,10 @@ async function processQueue(
 
       job.attempts += 1;
 
-      console.log(
-        `[Tomorrow.io] Key ${worker.keyIndex} → bairro ${job.point.id} ` +
-          `(${job.attempts}/${MAX_ATTEMPTS_PER_NEIGHBORHOOD})`,
-      );
+      // console.log(
+      //   `[Tomorrow.io] Key ${worker.keyIndex} → bairro ${job.point.id} ` +
+      //     `(${job.attempts}/${MAX_ATTEMPTS_PER_NEIGHBORHOOD})`,
+      // );
 
       try {
         const tile = await worker.execute(

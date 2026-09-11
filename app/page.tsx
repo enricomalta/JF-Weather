@@ -388,15 +388,15 @@ export default function Page() {
         <div className="timeline">
           <div className="timeline-head">
             <div>
-              <span>RADAR</span>
+              <span>TEMPO REAL</span>
             </div>
 
             <strong>
               {activeRadarFrame
-                ? "RADAR OBSERVADO"
+                ? "SATÉLITE OBSERVANDO"
                 : rainViewerLoading
-                  ? "CARREGANDO RADAR"
-                  : "RADAR INDISPONÍVEL"}
+                  ? "CARREGANDO SATÉLITE"
+                  : "SATÉLITE INDISPONÍVEL"}
             </strong>
           </div>
 

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, updateProfile, User } from "firebase/auth";
+import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
 import { collection, doc, getDoc, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb, googleProvider } from "@/lib/firebase-client";
+import { AuthenticatedShell } from "@/components/auth/authenticated-shell";
 
 const passwordRule = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 
@@ -33,7 +34,7 @@ export function AuthGate({ children }: Props) {
 
   const title = useMemo(() => mode === "login" ? "Acesse o JF Radar" : "Crie seu acesso", [mode]);
   if (checking) return <div className="auth-loading">Carregando acesso…</div>;
-  if (user) return <>{children}</>;
+  if (user) return <AuthenticatedShell user={user}>{children}</AuthenticatedShell>;
 
   async function loginWithEmail(event: React.FormEvent) {
     event.preventDefault(); setError(""); setBusy(true);

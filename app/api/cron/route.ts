@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { refreshSecretIsValid } from "@/lib/weather/firebase-admin";
+import { refreshSecretIsValid, sendPushToEnabledUsers } from "@/lib/weather/firebase-admin";
 import { runWeatherUpdate } from "@/lib/weather/tomorrow";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,10 @@ export async function GET(request: Request) {
 
   after(async () => {
     try {
-      await runWeatherUpdate();
+      await Promise.all([
+        runWeatherUpdate(),
+        sendPushToEnabledUsers("JF Radar", "Uma nova atualização meteorológica está disponível."),
+      ]);
     } catch (error) {
       console.error(
         "Erro na execução assíncrona do worker meteorológico:",

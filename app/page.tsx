@@ -8,6 +8,8 @@ import type { RainViewerFrame } from "@/lib/weather/rainviewer";
 import { doc, onSnapshot } from "firebase/firestore";
 import { clientDb } from "@/lib/firebase-client";
 
+const AuthGate = dynamic(() => import("@/components/auth/auth-gate").then((module) => module.AuthGate), { ssr: false, loading: () => <div className="auth-loading">Carregando acesso…</div> });
+
 const WeatherMap = dynamic(
   () =>
     import("@/components/weather/weather-map").then(
@@ -52,7 +54,7 @@ const intensity = (value: number) =>
         ? "Chuva moderada"
         : "Chuva forte";
 
-export default function Page() {
+function RadarPage() {
   const [data, setData] = useState<GridResponse>(empty);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
@@ -568,4 +570,8 @@ export default function Page() {
       </section>
     </main>
   );
+}
+
+export default function Page() {
+  return <AuthGate><RadarPage /></AuthGate>;
 }

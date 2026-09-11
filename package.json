@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "invite:create": "node --env-file-if-exists=/vercel/share/.env.project scripts/generate-invite.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

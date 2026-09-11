@@ -33,7 +33,14 @@ export function AuthGate({ children }: Props) {
   }, []);
 
   const title = useMemo(() => mode === "login" ? "Acesse o JF Radar" : "Crie seu acesso", [mode]);
-  if (checking) return <div className="auth-loading" role="status" aria-live="polite"><div className="auth-loading-mark"><img src="/icon.svg" alt="JF Radar" /><span /></div><p>CARREGANDO ACESSO</p></div>;
+  const closeInviteMessage = () => {
+    window.history.replaceState({}, "", window.location.pathname);
+    setCode(null);
+    setInviteState("missing");
+    setMode("login");
+    setError("");
+  };
+  if (checking) return <div className="auth-loading" role="status" aria-live="polite"><div className="auth-loading-mark"><span className="auth-loading-ring auth-loading-ring-back" /><span className="auth-loading-ring auth-loading-ring-front" /><img src="/icon.svg" alt="JF Radar" /><i /></div><p>CARREGANDO ACESSO</p></div>;
   if (user) return <AuthenticatedShell user={user}>{children}</AuthenticatedShell>;
 
   async function loginWithEmail(event: React.FormEvent) {
@@ -67,8 +74,9 @@ export function AuthGate({ children }: Props) {
   const invalidInvite = mode === "register" && inviteState !== "valid";
   return <main className="auth-shell"><div className="auth-grid" aria-hidden="true" /><section className="auth-card"><div className="auth-logo-wrap"><img className="auth-logo" src="/icon.svg" alt="JF Radar" /></div><div className="auth-brand">JF <span>RADAR</span></div><p className="auth-kicker">MONITORAMENTO METEOROLÓGICO</p><h1>{title}</h1><p className="auth-muted">Previsão e radar em tempo real para Juiz de Fora.</p>
     {mode === "login" ? <form onSubmit={loginWithEmail} className="auth-form"><label>Email<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Senha<input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label><button className="auth-primary" disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button></form> : <form onSubmit={register} className="auth-form"><label>Nome<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Email<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Senha<input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label><label>Repetir senha<input type="password" required value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} /></label><p className="auth-hint">Mínimo de 8 caracteres, com maiúscula, minúscula, número e símbolo.</p><button className="auth-primary" disabled={busy || invalidInvite}>{busy ? "Criando…" : "Criar conta"}</button></form>}
-    <button className="auth-google" onClick={googleLogin} disabled={busy}>Continuar com Google</button>{error && <p className="auth-error" role="alert">{error}</p>}
-    {mode === "login" ? <button className="auth-link" onClick={() => { setMode("register"); setError(""); }}>{code ? "Usar meu convite para criar conta" : "Tenho um convite"}</button> : <button className="auth-link" onClick={() => setMode("login")}>Voltar para login</button>}
-    {mode === "register" && inviteState !== "valid" && <div className="auth-dialog"><strong>{inviteState === "missing" ? "Convite necessário" : "Código expirado ou inválido"}</strong><span>O cadastro só pode ser acessado por um link de convite válido.</span><button onClick={() => setMode("login")}>Fechar</button></div>}
+    <button className="auth-google" onClick={googleLogin} disabled={busy}><span className="google-mark" aria-hidden="true">G</span><span>Continuar com Google</span></button>{error && <p className="auth-error" role="alert">{error}</p>}
+    {mode === "login" && inviteState === "valid" && <button className="auth-link" onClick={() => { setMode("register"); setError(""); }}>Criar conta com este convite</button>}
+    {mode === "register" && <button className="auth-link" onClick={closeInviteMessage}>Voltar para login</button>}
+    {mode === "login" && code && inviteState === "invalid" && <div className="auth-dialog"><strong>Código expirado ou inválido</strong><span>Este link de convite não permite criar uma conta.</span><button onClick={closeInviteMessage}>Fechar</button></div>}
   </section></main>;
 }

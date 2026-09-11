@@ -1,5 +1,6 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
+import { getMessaging } from "firebase-admin/messaging"
 
 function getAdminApp() {
   const existing = getApps()[0]
@@ -32,6 +33,14 @@ export async function sendDiscordAlert(content: string) {
   const webhook = process.env.DISCORD_WEBHOOK_URL
   if (!webhook) return
   await fetch(webhook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) })
+}
+
+export async function sendPushToEnabledUsers(title: string, body: string) {
+  const snapshot = await weatherDb().collection("users").where("notificationsEnabled", "==", true).get()
+  const tokens = snapshot.docs.flatMap((item) => Object.keys((item.data().fcmTokens ?? {}) as Record<string, boolean>))
+  if (!tokens.length) return { successCount: 0, failureCount: 0 }
+  const result = await getMessaging().sendEachForMulticast({ tokens, notification: { title, body } })
+  return { successCount: result.successCount, failureCount: result.failureCount }
 }
 
 export function serializeFirestore<T>(value: T): T {

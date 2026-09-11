@@ -4,6 +4,7 @@ import { useState } from "react";
 import { signOut, updatePassword, type User } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb } from "@/lib/firebase-client";
+import { registerPushToken } from "@/lib/firebase-messaging";
 
 export function AuthenticatedShell({ user, children }: { user: User; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -13,8 +14,8 @@ export function AuthenticatedShell({ user, children }: { user: User; children: R
   const initials = (user.displayName || user.email || "U").slice(0, 1).toUpperCase();
   async function toggleNotifications() {
     if (!notifications) {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") return;
+      const registered = await registerPushToken(user.uid);
+      if (!registered) return;
     }
     const next = !notifications;
     setNotifications(next);

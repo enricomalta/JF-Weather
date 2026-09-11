@@ -192,11 +192,11 @@ export default function Page() {
 
   const WEATHER_CACHE_KEY = "jf-radar-cache-radar";
   const WEATHER_CACHE_TTL = 1 * 60 * 60 * 1000; // 1 hora
-  const refreshWeather = async () => {
+  const refreshWeather = async (force = false) => {
     try {
       const cached = localStorage.getItem(WEATHER_CACHE_KEY);
 
-      if (cached) {
+      if (!force && cached) {
         const parsed = JSON.parse(cached);
 
         if (
@@ -238,7 +238,23 @@ export default function Page() {
     }
   };
   useEffect(() => {
-    refreshWeather();
+    const weatherRef = doc(
+      clientDb,
+      "weatherUpdates",
+      "latest",
+    );
+
+    const unsubscribe = onSnapshot(
+      weatherRef,
+      () => {
+        refreshWeather(true);
+      },
+      (error) => {
+        console.error("[Weather] Listener:", error);
+      },
+    );
+
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -434,7 +450,7 @@ export default function Page() {
             </div>
           )}
 
-          {selected && forecastPlaybackLength > 0 && (
+          {/* {selected && forecastPlaybackLength > 0 && (
             <div className="video-timeline">
               <div className="timeline-controls">
                 <button
@@ -490,6 +506,55 @@ export default function Page() {
                       </span>
                     ))}
               </div>
+            </div>
+          )} */}
+          {selected && forecastPlaybackLength > 0 && (
+            <div className="forecast-controls">
+              <button
+                type="button"
+                className="forecast-nav-button"
+                onClick={() => {
+                  setForecastIndex((value) => Math.max(0, value - 1));
+                }}
+                disabled={forecastIndex === 0}
+                aria-label="Voltar previsão"
+              >
+                ‹
+              </button>
+
+              <div className="forecast-time">
+                {currentPoint
+                  ? format(currentPoint.time)
+                  : "--:--"}
+              </div>
+
+              <button
+                type="button"
+                className={`forecast-button ${
+                  forecastIndex === 0 ? "active" : ""
+                }`}
+                onClick={() => {
+                  setForecastIndex(0);
+                  setPlaying(false);
+                }}
+                aria-label="Voltar para previsão atual"
+              >
+                PREVISÃO
+              </button>
+
+              <button
+                type="button"
+                className="forecast-nav-button"
+                onClick={() => {
+                  setForecastIndex((value) =>
+                    Math.min(forecastPlaybackLength - 1, value + 1),
+                  );
+                }}
+                disabled={forecastIndex === forecastPlaybackLength - 1}
+                aria-label="Avançar previsão"
+              >
+                ›
+              </button>
             </div>
           )}
         </div>

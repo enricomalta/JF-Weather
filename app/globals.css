@@ -677,7 +677,84 @@ button {
 .dev-panel span {
     margin-right: 10px;
 }
+.forecast-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 14px;
+}
 
+.forecast-time {
+    min-width: 58px;
+    text-align: center;
+    color: #d9edf0;
+    font: 700 15px monospace;
+    letter-spacing: .03em;
+}
+
+.forecast-nav-button,
+.forecast-button {
+    height: 32px;
+    border: 1px solid #23444b;
+    background: #0b1a20;
+    color: #75949a;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font: 9px monospace;
+    letter-spacing: .08em;
+}
+
+.forecast-nav-button {
+    width: 32px;
+    font-size: 24px;
+    line-height: 1;
+}
+
+.forecast-button {
+    min-width: 96px;
+    padding: 0 12px;
+}
+
+.forecast-nav-button:hover:not(:disabled),
+.forecast-button:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+}
+
+.forecast-nav-button:disabled {
+    opacity: .25;
+    cursor: default;
+}
+
+.forecast-button.active {
+    border-color: var(--cyan);
+    color: var(--cyan);
+}
+
+@media(max-width:640px) {
+    .forecast-controls {
+        gap: 8px;
+    }
+
+    .forecast-time {
+        min-width: 54px;
+        font-size: 14px;
+    }
+
+    .forecast-nav-button {
+        width: 34px;
+        height: 34px;
+    }
+
+    .forecast-button {
+        min-width: 92px;
+        height: 34px;
+    }
+}
 @media(max-width:1024px) {
     .radar-header {
         padding: 0 12px

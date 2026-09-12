@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { createUserWithEmailAndPassword, getAdditionalUserInfo, getRedirectResult, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, signOut, updatePassword, updateProfile, User } from "firebase/auth";
+import { browserLocalPersistence, createUserWithEmailAndPassword, getAdditionalUserInfo, onAuthStateChanged, setPersistence, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb, googleProvider } from "@/lib/firebase-client";
 import { AuthenticatedShell } from "@/components/auth/authenticated-shell";
@@ -61,30 +61,6 @@ export function AuthGate({ children }: Props) {
     return () => { active = false; };
   }, [pathname, router]);
 
-  useEffect(() => {
-    let active = true;
-    getRedirectResult(clientAuth).then(async (result) => {
-      if (!result || !active) return;
-      setBusy(true);
-      try {
-        const inviteCode = new URLSearchParams(window.location.search).get("code")?.trim() || null;
-        if (mode === "register") {
-          const inviteResponse = await fetch(`/api/auth/invite?code=${encodeURIComponent(inviteCode || "")}`, { cache: "no-store" });
-          const invite = await inviteResponse.json().catch(() => ({ valid: false }));
-          if (!invite.valid) throw new Error("INVITE_INVALID");
-          const idToken = await result.user.getIdToken(true);
-          const additionalInfo = getAdditionalUserInfo(result);
-          const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code: inviteCode, name: result.user.displayName || "", newUser: additionalInfo?.isNewUser === true }) });
-          if (!response.ok) throw new Error("REGISTER_FAILED");
-        }
-        await establishSession(result.user);
-      } catch (cause) {
-        if (active) setError(cause instanceof Error && cause.message === "INVITE_INVALID" ? "Este convite já foi usado, expirou ou é inválido." : "Não foi possível concluir a conexão com o Google.");
-      } finally { if (active) setBusy(false); }
-    }).catch((cause) => { if (active && cause?.code !== "auth/no-auth-event") setError("Não foi possível conectar com o Google. Tente novamente."); });
-    return () => { active = false; };
-  }, [mode]);
-
   const title = useMemo(() => mode === "login" ? "Acesse o JF Radar" : "Crie seu acesso", [mode]);
   const closeInviteMessage = () => {
     window.history.replaceState({}, "", window.location.pathname);
@@ -131,21 +107,46 @@ export function AuthGate({ children }: Props) {
       return;
     }
 
-    // Redirect é mais confiável que popup dentro do preview/iframe e também funciona
-    // quando o navegador bloqueia janelas abertas por scripts.
     setBusy(true);
     try {
-      await signInWithRedirect(clientAuth, googleProvider);
+      await setPersistence(clientAuth, browserLocalPersistence);
+      const result = await signInWithPopup(clientAuth, googleProvider);
+      if (mode === "register") {
+        const idToken = await result.user.getIdToken(true);
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idToken,
+            code: inviteCode,
+            name: result.user.displayName || "",
+            newUser: getAdditionalUserInfo(result)?.isNewUser === true,
+          }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          if (payload.error === "INVITE_INVALID") throw new Error("INVITE_INVALID");
+          throw new Error("REGISTER_FAILED");
+        }
+      }
+      await establishSession(result.user);
     } catch (cause) {
       const authCode = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
-      const googleError = authCode === "auth/unauthorized-domain"
-        ? "Este domínio ainda não está autorizado no Firebase para login com Google."
-        : authCode === "auth/operation-not-allowed"
-          ? "O login com Google ainda não está habilitado no Firebase."
-          : authCode === "auth/invalid-api-key"
-            ? "A configuração pública do Firebase está inválida."
-            : "Não foi possível conectar com o Google. Tente novamente.";
+      const googleError = cause instanceof Error && cause.message === "INVITE_INVALID"
+        ? "Este convite já foi usado, expirou ou é inválido."
+        : authCode === "auth/popup-closed-by-user"
+          ? "A janela do Google foi fechada antes de concluir o acesso."
+          : authCode === "auth/popup-blocked"
+            ? "O navegador bloqueou a janela do Google. Permita pop-ups para este site."
+            : authCode === "auth/unauthorized-domain"
+              ? "Este domínio ainda não está autorizado no Firebase para login com Google."
+              : authCode === "auth/operation-not-allowed"
+                ? "O login com Google ainda não está habilitado no Firebase."
+                : authCode === "auth/invalid-api-key"
+                  ? "A configuração pública do Firebase está inválida."
+                  : `Não foi possível conectar com o Google${authCode ? ` (${authCode})` : ""}.`;
       setError(googleError);
+    } finally {
       setBusy(false);
     }
   }

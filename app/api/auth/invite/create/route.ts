@@ -19,6 +19,7 @@ export async function POST(request: Request) {
       code,
       valid: true,
       createdBy: decoded.uid,
+      criadoPor: decoded.uid,
       createdAt: FieldValue.serverTimestamp(),
       expiresAt,
       usedBy: null,

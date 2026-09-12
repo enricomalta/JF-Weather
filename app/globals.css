@@ -923,6 +923,17 @@ button {
 .profile-menu button:hover,
 .profile-menu button:focus-visible { border-color: var(--line); background: #10272e; color: var(--cyan); outline: none; }
 .profile-menu input { min-height: 34px; padding: 0 9px; border: 1px solid var(--line); background: #071016; color: var(--foreground); }
+.profile-menu button[role="menuitem"] { display: flex; align-items: center; gap: 8px; width: 100%; }
+.auth-dialog { position: fixed; inset: 0; z-index: 3000; display: flex; flex-direction: column; gap: 14px; width: min(420px, calc(100vw - 32px)); height: fit-content; margin: auto; padding: 24px; border: 1px solid var(--line); background: #09171c; color: var(--foreground); box-shadow: 0 24px 80px #000b; animation: auth-rise .2s ease both; }
+.auth-dialog::before { content: ""; position: fixed; inset: 0; z-index: -1; background: #02080bb8; }
+.auth-dialog strong { font-size: 16px; }
+.auth-dialog span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.auth-dialog input { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); background: #071016; color: var(--foreground); font-size: 11px; }
+.auth-dialog button { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); background: #10272e; color: var(--foreground); cursor: pointer; }
+.auth-dialog button:hover { border-color: var(--cyan); color: var(--cyan); }
+.dialog-close { align-self: flex-end; min-height: 28px !important; padding: 0 8px !important; border: 0 !important; background: transparent !important; }
+.invite-actions { display: flex; gap: 8px; }
+.invite-actions button { display: flex; align-items: center; gap: 7px; flex: 1; }
 .settings-toggle { display: flex; align-items: center; gap: 8px; color: var(--foreground); font-size: 12px; }
 @media(max-width:640px) {
     .profile-area { top: 8px; right: 10px; }

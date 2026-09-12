@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
-import { collection, doc, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb, googleProvider } from "@/lib/firebase-client";
 import { AuthenticatedShell } from "@/components/auth/authenticated-shell";
 
@@ -88,14 +88,14 @@ export function AuthGate({ children }: Props) {
     try {
       const credential = await createUserWithEmailAndPassword(clientAuth, form.email, form.password);
       await updateProfile(credential.user, { displayName: form.name });
-      await runTransaction(clientDb, async (transaction) => {
-        const inviteRef = doc(collection(clientDb, "inviteCodes"), code!);
-        const invite = await transaction.get(inviteRef);
-        const data = invite.data() as { valid?: boolean; usedAt?: unknown; expiresAt?: { toMillis?: () => number } } | undefined;
-        if (!invite.exists() || data?.valid === false || data?.usedAt || Boolean(data?.expiresAt?.toMillis && data.expiresAt.toMillis() < Date.now())) throw new Error("INVITE_INVALID");
-        transaction.set(doc(clientDb, "users", credential.user.uid), { name: form.name, email: form.email, createdAt: serverTimestamp(), notificationsEnabled: false });
-        transaction.update(inviteRef, { usedAt: serverTimestamp(), usedBy: credential.user.uid });
-      });
+      const idToken = await credential.user.getIdToken(true);
+      const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code, name: form.name }) });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        if (result.error === "INVITE_INVALID") throw new Error("INVITE_INVALID");
+        throw new Error("REGISTER_FAILED");
+      }
+      await establishSession(credential.user);
     } catch (cause) { setError(cause instanceof Error && cause.message === "INVITE_INVALID" ? "Este convite já foi usado, expirou ou é inválido." : "Não foi possível concluir o cadastro."); } finally { setBusy(false); }
   }
 
@@ -106,14 +106,13 @@ export function AuthGate({ children }: Props) {
     try {
       const result = await signInWithPopup(clientAuth, googleProvider);
       if (mode === "register") {
-        await runTransaction(clientDb, async (transaction) => {
-          const inviteRef = doc(collection(clientDb, "inviteCodes"), code!);
-          const invite = await transaction.get(inviteRef);
-          const data = invite.data() as { valid?: boolean; usedAt?: unknown; expiresAt?: { toMillis?: () => number } } | undefined;
-          if (!invite.exists() || data?.valid === false || data?.usedAt || Boolean(data?.expiresAt?.toMillis && data.expiresAt.toMillis() < Date.now())) throw new Error("INVITE_INVALID");
-          transaction.set(doc(clientDb, "users", result.user.uid), { name: result.user.displayName, email: result.user.email, photoURL: result.user.photoURL, createdAt: serverTimestamp(), notificationsEnabled: false }, { merge: true });
-          transaction.update(inviteRef, { usedAt: serverTimestamp(), usedBy: result.user.uid });
-        });
+        const idToken = await result.user.getIdToken(true);
+        const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code, name: result.user.displayName || "" }) });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          if (data.error === "INVITE_INVALID") throw new Error("INVITE_INVALID");
+          throw new Error("REGISTER_FAILED");
+        }
         await establishSession(result.user);
       } else {
         await setDoc(doc(clientDb, "users", result.user.uid), { name: result.user.displayName, email: result.user.email, photoURL: result.user.photoURL, createdAt: serverTimestamp() }, { merge: true });

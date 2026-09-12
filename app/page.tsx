@@ -191,65 +191,13 @@ function RadarPage() {
   const detailValue = currentPoint?.precipitation ?? rain?.precipitation ?? 0;
   const detailProbability = currentPoint?.probability ?? rain?.precipitationProbability ?? 0;
   const selectedHasRain = detailValue > 0 || detailProbability > 0;
-
-  const WEATHER_CACHE_KEY = "jf-radar-cache-radar";
-  const WEATHER_CACHE_TTL = 1 * 60 * 60 * 1000; // 1 hora
-  const refreshWeather = async (force = false) => {
-    try {
-      const cached = localStorage.getItem(WEATHER_CACHE_KEY);
-
-      if (!force && cached) {
-        const parsed = JSON.parse(cached);
-
-        if (
-          parsed.timestamp &&
-          Date.now() - parsed.timestamp < WEATHER_CACHE_TTL &&
-          parsed.data
-        ) {
-          setData(parsed.data);
-          setLoading(false);
-          return;
-        }
-      }
-
-      setLoading(true);
-
-      const response = await fetch("/api/weather/grid", {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error("Falha ao carregar previsão.");
-      }
-
-      const weather = await response.json();
-
-      setData(weather);
-
-      localStorage.setItem(
-        WEATHER_CACHE_KEY,
-        JSON.stringify({
-          timestamp: Date.now(),
-          data: weather,
-        }),
-      );
-    } catch (error) {
-      console.error("[Weather] Falha ao carregar previsão:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
   useEffect(() => {
-    const weatherRef = doc(
-      clientDb,
-      "weatherUpdates",
-      "latest",
-    );
+    const weatherRef = doc(clientDb, "weatherUpdates", "latest");
 
     const unsubscribe = onSnapshot(
       weatherRef,
       () => {
-        refreshWeather(true);
+        void refresh(true);
       },
       (error) => {
         console.error("[Weather] Listener:", error);

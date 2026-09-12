@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createUserWithEmailAndPassword, getAdditionalUserInfo, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb, googleProvider } from "@/lib/firebase-client";
 import { AuthenticatedShell } from "@/components/auth/authenticated-shell";
 

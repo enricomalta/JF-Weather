@@ -89,7 +89,7 @@ export function AuthGate({ children }: Props) {
       const credential = await createUserWithEmailAndPassword(clientAuth, form.email, form.password);
       await updateProfile(credential.user, { displayName: form.name });
       const idToken = await credential.user.getIdToken(true);
-      const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code, name: form.name }) });
+      const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code, name: form.name, newUser: true }) });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
         if (result.error === "INVITE_INVALID") throw new Error("INVITE_INVALID");
@@ -107,7 +107,7 @@ export function AuthGate({ children }: Props) {
       const result = await signInWithPopup(clientAuth, googleProvider);
       if (mode === "register") {
         const idToken = await result.user.getIdToken(true);
-        const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code, name: result.user.displayName || "" }) });
+        const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code, name: result.user.displayName || "", newUser: result.additionalUserInfo?.isNewUser === true }) });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           if (data.error === "INVITE_INVALID") throw new Error("INVITE_INVALID");

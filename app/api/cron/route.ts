@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { refreshSecretIsValid, sendPushToEnabledUsers } from "@/lib/weather/firebase-admin";
+import { refreshSecretIsValid } from "@/lib/weather/firebase-admin";
 import { runWeatherUpdate } from "@/lib/weather/tomorrow";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,6 @@ export async function GET(request: Request) {
     try {
       await Promise.all([
         runWeatherUpdate(),
-        sendPushToEnabledUsers("JF Radar", "Uma nova atualização meteorológica está disponível."),
       ]);
     } catch (error) {
       console.error(

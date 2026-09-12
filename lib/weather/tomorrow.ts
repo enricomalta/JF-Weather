@@ -4,6 +4,7 @@ import {
   WEATHER_META_COLLECTION,
   WEATHER_META_DOCUMENT,
   sendDiscordAlert,
+  sendPushToEnabledUsers,
   serializeFirestore,
   weatherDb,
 } from "./firebase-admin";
@@ -1958,11 +1959,17 @@ async function sendRainAlerts(
     return 0;
   }
 
-  await sendDiscordAlert(
-    `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
-      ", ",
-    )}. Accesse nossa plataforma para mais detalhes: https://jf-radar.vercel.app/`,
-  );
+  const alertMessage = `JF Radar: chuva agora ou na próxima hora em ${alerts.join(
+    ", ",
+  )}. Accesse nossa plataforma para mais detalhes: https://jf-radar.vercel.app/`;
+
+  await Promise.all([
+    sendDiscordAlert(alertMessage),
+    sendPushToEnabledUsers(
+      "JF Radar",
+      `Chuva agora ou na próxima hora em ${alerts.join(", ")}. Acesse nossa plataforma para mais detalhes.`,
+    ),
+  ]);
 
   return alerts.length;
 }

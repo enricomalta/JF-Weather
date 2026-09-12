@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { createUserWithEmailAndPassword, getAdditionalUserInfo, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
+import { createUserWithEmailAndPassword, getAdditionalUserInfo, getRedirectResult, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, signOut, updatePassword, updateProfile, User } from "firebase/auth";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb, googleProvider } from "@/lib/firebase-client";
 import { AuthenticatedShell } from "@/components/auth/authenticated-shell";
@@ -60,6 +60,30 @@ export function AuthGate({ children }: Props) {
 
     return () => { active = false; };
   }, [pathname, router]);
+
+  useEffect(() => {
+    let active = true;
+    getRedirectResult(clientAuth).then(async (result) => {
+      if (!result || !active) return;
+      setBusy(true);
+      try {
+        const inviteCode = new URLSearchParams(window.location.search).get("code")?.trim() || null;
+        if (mode === "register") {
+          const inviteResponse = await fetch(`/api/auth/invite?code=${encodeURIComponent(inviteCode || "")}`, { cache: "no-store" });
+          const invite = await inviteResponse.json().catch(() => ({ valid: false }));
+          if (!invite.valid) throw new Error("INVITE_INVALID");
+          const idToken = await result.user.getIdToken(true);
+          const additionalInfo = getAdditionalUserInfo(result);
+          const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code: inviteCode, name: result.user.displayName || "", newUser: additionalInfo?.isNewUser === true }) });
+          if (!response.ok) throw new Error("REGISTER_FAILED");
+        }
+        await establishSession(result.user);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error && cause.message === "INVITE_INVALID" ? "Este convite já foi usado, expirou ou é inválido." : "Não foi possível concluir a conexão com o Google.");
+      } finally { if (active) setBusy(false); }
+    }).catch((cause) => { if (active && cause?.code !== "auth/no-auth-event") setError("Não foi possível conectar com o Google. Tente novamente."); });
+    return () => { active = false; };
+  }, [mode]);
 
   const title = useMemo(() => mode === "login" ? "Acesse o JF Radar" : "Crie seu acesso", [mode]);
   const closeInviteMessage = () => {
@@ -126,9 +150,12 @@ export function AuthGate({ children }: Props) {
         if (mode === "register") router.replace("/login");
       } else {
         const authCode = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
-        const googleError = authCode === "auth/popup-blocked"
-          ? "O navegador bloqueou a janela do Google. Permita pop-ups para este site e tente novamente."
-          : authCode === "auth/popup-closed-by-user"
+        if (authCode === "auth/popup-blocked" || authCode === "auth/cancelled-popup-request") {
+          setBusy(true);
+          await signInWithRedirect(clientAuth, googleProvider);
+          return;
+        }
+        const googleError = authCode === "auth/popup-closed-by-user"
             ? "A conexão com o Google foi cancelada."
             : authCode === "auth/unauthorized-domain"
               ? "Este domínio ainda não está autorizado no Firebase para login com Google."

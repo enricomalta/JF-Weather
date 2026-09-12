@@ -124,14 +124,26 @@ export function AuthGate({ children }: Props) {
       if (cause instanceof Error && cause.message === "INVITE_INVALID") {
         setError("Este convite já foi usado, expirou ou é inválido.");
         if (mode === "register") router.replace("/login");
-      } else setError("Não foi possível conectar com o Google.");
+      } else {
+        const authCode = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
+        const googleError = authCode === "auth/popup-blocked"
+          ? "O navegador bloqueou a janela do Google. Permita pop-ups para este site e tente novamente."
+          : authCode === "auth/popup-closed-by-user"
+            ? "A conexão com o Google foi cancelada."
+            : authCode === "auth/unauthorized-domain"
+              ? "Este domínio ainda não está autorizado no Firebase para login com Google."
+              : authCode === "auth/operation-not-allowed"
+                ? "O login com Google ainda não está habilitado no Firebase."
+                : "Não foi possível conectar com o Google. Tente novamente.";
+        setError(googleError);
+      }
     } finally { setBusy(false); }
   }
 
   const invalidInvite = mode === "register" && inviteState !== "valid";
   return <main className="auth-shell"><div className="auth-grid" aria-hidden="true" /><section className="auth-card"><div className="auth-logo-wrap"><img className="auth-logo" src="/icon.svg" alt="JF Radar" /></div><div className="auth-brand">JF <span>RADAR</span></div><p className="auth-kicker">MONITORAMENTO METEOROLÓGICO</p><h1>{title}</h1><p className="auth-muted">Previsão e radar em tempo real para Juiz de Fora.</p>
     {mode === "login" ? <form onSubmit={loginWithEmail} className="auth-form"><label>Email<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Senha<input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label><button className="auth-primary" disabled={busy}>{busy ? "Entrando…" : "Entrar"}</button></form> : <form onSubmit={register} className="auth-form"><label>Nome<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Email<input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Senha<input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label><label>Repetir senha<input type="password" required value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} /></label><p className="auth-hint">Mínimo de 8 caracteres, com maiúscula, minúscula, número e símbolo.</p><button className="auth-primary" disabled={busy || invalidInvite}>{busy ? "Criando…" : "Criar conta"}</button></form>}
-    <button className="auth-google" onClick={googleLogin} disabled={busy}><span className="google-mark" aria-hidden="true">G</span><span>Continuar com Google</span></button>{error && <p className="auth-error" role="alert">{error}</p>}
+    <button type="button" className="auth-google" onClick={googleLogin} disabled={busy}><span className="google-mark" aria-hidden="true">G</span><span>Continuar com Google</span></button>{error && <p className="auth-error" role="alert">{error}</p>}
     {mode === "register" && <button className="auth-link" onClick={closeInviteMessage}>Voltar para login</button>}
     {mode === "login" && code && inviteState === "invalid" && <div className="auth-dialog"><strong>Código expirado ou inválido</strong><span>Este link de convite não permite criar uma conta.</span><button onClick={closeInviteMessage}>Fechar</button></div>}
   </section></main>;

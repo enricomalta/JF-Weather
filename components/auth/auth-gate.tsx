@@ -126,45 +126,28 @@ export function AuthGate({ children }: Props) {
   async function googleLogin() {
     setError("");
     const inviteCode = mode === "register" ? new URLSearchParams(window.location.search).get("code")?.trim() || null : null;
-    if (mode === "register" && (inviteState !== "valid" || !inviteCode)) { setError("É necessário um convite válido para criar uma conta."); return; }
+    if (mode === "register" && (inviteState !== "valid" || !inviteCode)) {
+      setError("É necessário um convite válido para criar uma conta.");
+      return;
+    }
+
+    // Redirect é mais confiável que popup dentro do preview/iframe e também funciona
+    // quando o navegador bloqueia janelas abertas por scripts.
     setBusy(true);
     try {
-      const result = await signInWithPopup(clientAuth, googleProvider);
-      if (mode === "register") {
-        const idToken = await result.user.getIdToken(true);
-        const additionalInfo = getAdditionalUserInfo(result);
-        const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code: inviteCode, name: result.user.displayName || "", newUser: additionalInfo?.isNewUser === true }) });
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          if (data.error === "INVITE_INVALID") throw new Error("INVITE_INVALID");
-          throw new Error("REGISTER_FAILED");
-        }
-        await establishSession(result.user);
-      } else {
-        await setDoc(doc(clientDb, "users", result.user.uid), { name: result.user.displayName, email: result.user.email, photoURL: result.user.photoURL, createdAt: serverTimestamp() }, { merge: true });
-        await establishSession(result.user);
-      }
+      await signInWithRedirect(clientAuth, googleProvider);
     } catch (cause) {
-      if (cause instanceof Error && cause.message === "INVITE_INVALID") {
-        setError("Este convite já foi usado, expirou ou é inválido.");
-        if (mode === "register") router.replace("/login");
-      } else {
-        const authCode = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
-        if (authCode === "auth/popup-blocked" || authCode === "auth/cancelled-popup-request") {
-          setBusy(true);
-          await signInWithRedirect(clientAuth, googleProvider);
-          return;
-        }
-        const googleError = authCode === "auth/popup-closed-by-user"
-            ? "A conexão com o Google foi cancelada."
-            : authCode === "auth/unauthorized-domain"
-              ? "Este domínio ainda não está autorizado no Firebase para login com Google."
-              : authCode === "auth/operation-not-allowed"
-                ? "O login com Google ainda não está habilitado no Firebase."
-                : "Não foi possível conectar com o Google. Tente novamente.";
-        setError(googleError);
-      }
-    } finally { setBusy(false); }
+      const authCode = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
+      const googleError = authCode === "auth/unauthorized-domain"
+        ? "Este domínio ainda não está autorizado no Firebase para login com Google."
+        : authCode === "auth/operation-not-allowed"
+          ? "O login com Google ainda não está habilitado no Firebase."
+          : authCode === "auth/invalid-api-key"
+            ? "A configuração pública do Firebase está inválida."
+            : "Não foi possível conectar com o Google. Tente novamente.";
+      setError(googleError);
+      setBusy(false);
+    }
   }
 
   const invalidInvite = mode === "register" && inviteState !== "valid";

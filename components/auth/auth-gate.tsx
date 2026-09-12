@@ -70,7 +70,9 @@ export function AuthGate({ children }: Props) {
     setError("");
   };
   useEffect(() => {
-    if (user && pathname === "/register") router.replace("/");
+    if (user && (pathname === "/login" || pathname === "/register")) {
+      router.replace("/");
+    }
   }, [pathname, router, user]);
 
   if (checking || (mode === "register" && inviteState === "checking")) return <div className="auth-loading" role="status" aria-live="polite"><div className="auth-loading-mark"><span className="auth-loading-ring auth-loading-ring-back" /><span className="auth-loading-ring auth-loading-ring-front" /><img src="/icon.svg" alt="JF Radar" /><i /></div><p>{mode === "register" ? "VALIDANDO CONVITE" : "CARREGANDO ACESSO"}</p></div>;

@@ -1,4 +1,5 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app"
+import { getAuth } from "firebase-admin/auth"
 import { getFirestore } from "firebase-admin/firestore"
 import { getMessaging } from "firebase-admin/messaging"
 
@@ -14,6 +15,10 @@ function getAdminApp() {
 
 export function weatherDb() {
   return getFirestore(getAdminApp())
+}
+
+export function weatherAuth() {
+  return getAuth(getAdminApp())
 }
 
 export const WEATHER_COLLECTION = "weatherNeighborhoods"

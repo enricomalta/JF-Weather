@@ -1,12 +1,11 @@
-import { getAuth } from "firebase-admin/auth"
-import { FieldValue, weatherDb } from "@/lib/weather/firebase-admin"
+import { FieldValue, weatherAuth, weatherDb } from "@/lib/weather/firebase-admin"
 import crypto from "node:crypto"
 
 const SESSION_COOKIE = "jf_session"
 const REFRESH_COOKIE = "jf_refresh"
 const SESSION_DAYS = 7
 
-function adminAuth() { return getAuth() }
+function adminAuth() { return weatherAuth() }
 function hash(value: string) { return crypto.createHash("sha256").update(value).digest("hex") }
 function cookie(name: string, value: string, maxAge: number) { return `${name}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax; Secure` }
 

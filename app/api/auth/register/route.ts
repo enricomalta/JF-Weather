@@ -1,5 +1,4 @@
-import { getAuth } from "firebase-admin/auth"
-import { FieldValue, weatherDb } from "@/lib/weather/firebase-admin"
+import { FieldValue, weatherAuth, weatherDb } from "@/lib/weather/firebase-admin"
 import { NextResponse } from "next/server"
 
 function isValidInvite(data: FirebaseFirestore.DocumentData | undefined) {
@@ -15,7 +14,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "INVITE_INVALID" }, { status: 400 })
     }
 
-    const decoded = await getAuth().verifyIdToken(body.idToken)
+    const adminAuth = weatherAuth()
+    const decoded = await adminAuth.verifyIdToken(body.idToken)
     const db = weatherDb()
     const inviteRef = db.collection("inviteCodes").doc(body.code)
     const userRef = db.collection("users").doc(decoded.uid)
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       // Auth and Firestore do not share a transaction coordinator. Roll back a
       // newly-created Auth account if the atomic Firestore commit is rejected.
       if (body.newUser && error instanceof Error && error.message !== "INVITE_INVALID" && error.message !== "USER_ALREADY_REGISTERED") {
-        await getAuth().deleteUser(decoded.uid).catch(() => undefined)
+        await adminAuth.deleteUser(decoded.uid).catch(() => undefined)
       }
       throw error
     }

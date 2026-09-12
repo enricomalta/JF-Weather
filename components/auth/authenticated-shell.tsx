@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { signOut, updatePassword, type User } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
 import { Copy, MessageCircle, ShieldPlus, X } from "lucide-react";
 import { clientAuth, clientDb } from "@/lib/firebase-client";
 import { registerPushToken } from "@/lib/firebase-messaging";
@@ -18,13 +18,28 @@ export function AuthenticatedShell({ user, children }: { user: User; children: R
   const [inviteBusy, setInviteBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const initials = (user.displayName || user.email || "U").slice(0, 1).toUpperCase();
+  const notificationPrompted = useRef(false);
 
   useEffect(() => {
-    getDoc(doc(clientDb, "users", user.uid)).then((snapshot) => {
-      const data = snapshot.data();
-      setAdmin(data?.admin === true);
-      setNotifications(data?.notificationsEnabled === true);
+    let active = true;
+    void user.getIdToken().then(async (idToken) => {
+      const response = await fetch("/api/auth/profile", { headers: { Authorization: `Bearer ${idToken}` }, cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (active) {
+        setAdmin(data.admin === true);
+        setNotifications(data.notificationsEnabled === true);
+      }
     }).catch(() => undefined);
+    return () => { active = false; };
+  }, [user]);
+
+  useEffect(() => {
+    if (notificationPrompted.current || typeof window === "undefined" || !("Notification" in window)) return;
+    notificationPrompted.current = true;
+    if (Notification.permission === "default") void registerPushToken(user.uid).then((registered) => {
+      if (registered) setNotifications(true);
+    });
   }, [user.uid]);
 
   async function toggleNotifications() {

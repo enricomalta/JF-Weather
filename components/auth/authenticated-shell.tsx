@@ -37,8 +37,8 @@ export function AuthenticatedShell({ user, children }: { user: User; children: R
   useEffect(() => {
     if (notificationPrompted.current || typeof window === "undefined" || !("Notification" in window)) return;
     notificationPrompted.current = true;
-    if (Notification.permission === "default") void registerPushToken(user.uid).then((registered) => {
-      if (registered) setNotifications(true);
+    if (Notification.permission === "default") void registerPushToken(user.uid).then((result) => {
+      if (result.ok) setNotifications(true);
     });
   }, [user.uid]);
 
@@ -49,9 +49,17 @@ export function AuthenticatedShell({ user, children }: { user: User; children: R
       await setDoc(doc(clientDb, "users", user.uid), { notificationsEnabled: false }, { merge: true });
       return;
     }
-    const registered = await registerPushToken(user.uid);
-    if (!registered) {
-      setNotice(Notification.permission === "denied" ? "As notificações estão bloqueadas nas permissões do navegador." : "Permita as notificações no navegador para ativá-las.");
+    const result = await registerPushToken(user.uid);
+    if (!result.ok) {
+      const messages = {
+        denied: "A permissão foi recusada. Clique no cadeado da barra de endereço e permita as notificações.",
+        "missing-vapid-key": "A chave de notificações não está configurada.",
+        "token-unavailable": "O navegador não forneceu um token de notificação.",
+        unsupported: "Este navegador não oferece suporte a notificações push.",
+        "registration-failed": "Não foi possível registrar as notificações. Verifique se as notificações estão permitidas para este site.",
+      } as const;
+      setNotice(messages[result.reason]);
+      setNotifications(false);
       return;
     }
     setNotifications(true);

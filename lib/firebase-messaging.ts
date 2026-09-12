@@ -1,12 +1,11 @@
 import { getMessaging, getToken, isSupported } from "firebase/messaging";
-import { doc, setDoc } from "firebase/firestore";
-import { clientDb, firebaseApp } from "@/lib/firebase-client";
+import { firebaseApp } from "@/lib/firebase-client";
 
 export type PushRegistrationResult =
   | { ok: true }
   | { ok: false; reason: "unsupported" | "denied" | "missing-vapid-key" | "token-unavailable" | "registration-failed" };
 
-export async function registerPushToken(userId: string): Promise<PushRegistrationResult> {
+export async function registerPushToken(userId: string, idToken: string): Promise<PushRegistrationResult> {
   if (typeof window === "undefined" || !("Notification" in window) || !("serviceWorker" in navigator)) {
     return { ok: false, reason: "unsupported" };
   }
@@ -25,7 +24,12 @@ export async function registerPushToken(userId: string): Promise<PushRegistratio
     await navigator.serviceWorker.ready;
     const token = await getToken(getMessaging(firebaseApp), { vapidKey, serviceWorkerRegistration: registration });
     if (!token) return { ok: false, reason: "token-unavailable" };
-    await setDoc(doc(clientDb, "users", userId), { fcmTokens: { [token]: true }, notificationsEnabled: true }, { merge: true });
+    const response = await fetch("/api/auth/push/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, idToken, fcmToken: token }),
+    });
+    if (!response.ok) return { ok: false, reason: "registration-failed" };
     return { ok: true };
   } catch {
     return { ok: false, reason: "registration-failed" };

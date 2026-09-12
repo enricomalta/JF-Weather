@@ -1,3 +1,4 @@
+import "dotenv/config"
 import crypto from "node:crypto"
 import { cert, getApps, initializeApp } from "firebase-admin/app"
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore"

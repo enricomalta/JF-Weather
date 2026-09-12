@@ -367,6 +367,7 @@ function RadarPage() {
             <strong>{selected}</strong>
             <div className="rain-detail">
               <span>Intensidade: {intensity(detailValue)}</span>
+
               <span>
                 Precipitação:{" "}
                 {currentPoint
@@ -377,7 +378,55 @@ function RadarPage() {
                       ? `${rain.precipitation.toFixed(1)} mm/h`
                       : "indisponível"}
               </span>
+
               <span>Probabilidade: {detailProbability}%</span>
+
+              {rain && (
+                <>
+                  <span>
+                    Temperatura:{" "}
+                    {typeof rain.temperature === "number"
+                      ? `${rain.temperature.toFixed(1)} °C`
+                      : "indisponível"}
+                  </span>
+
+                  <span>
+                    Umidade:{" "}
+                    {typeof rain.humidity === "number"
+                      ? `${rain.humidity}%`
+                      : "indisponível"}
+                  </span>
+
+                  <span>
+                    Nuvens:{" "}
+                    {typeof rain.cloudCover === "number"
+                      ? `${rain.cloudCover}%`
+                      : "indisponível"}
+                  </span>
+
+                  <span>
+                    Probabilidade de chuva:{" "}
+                    {typeof rain.precipitationProbability === "number"
+                      ? `${rain.precipitationProbability}%`
+                      : "indisponível"}
+                  </span>
+
+                  <span>
+                    Vento:{" "}
+                    {typeof rain.windSpeed === "number"
+                      ? `${rain.windSpeed.toFixed(1)} m/s`
+                      : "indisponível"}
+                  </span>
+
+                  <span>
+                    Direção do vento:{" "}
+                    {typeof rain.windDirection === "number"
+                      ? `${rain.windDirection}°`
+                      : "indisponível"}
+                  </span>
+                </>
+              )}
+
               <span>
                 Atualizado: {rain ? format(rain.timestamp) : "indisponível"}
               </span>

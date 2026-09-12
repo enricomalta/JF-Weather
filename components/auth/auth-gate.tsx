@@ -11,6 +11,12 @@ const passwordRule = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 
 type Props = { children: React.ReactNode };
 
+async function establishSession(user: User) {
+  const idToken = await user.getIdToken(true);
+  const response = await fetch("/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }) });
+  if (!response.ok) throw new Error("SESSION_FAILED");
+}
+
 export function AuthGate({ children }: Props) {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
@@ -52,7 +58,7 @@ export function AuthGate({ children }: Props) {
 
   async function loginWithEmail(event: React.FormEvent) {
     event.preventDefault(); setError(""); setBusy(true);
-    try { await signInWithEmailAndPassword(clientAuth, form.email, form.password); }
+    try { const credential = await signInWithEmailAndPassword(clientAuth, form.email, form.password); await establishSession(credential.user); }
     catch { setError("Email ou senha inválidos."); } finally { setBusy(false); }
   }
 
@@ -82,8 +88,10 @@ export function AuthGate({ children }: Props) {
     setBusy(true);
     try {
       const result = await signInWithPopup(clientAuth, googleProvider);
+      await establishSession(result.user);
       if (mode === "register") {
-        await runTransaction(clientDb, async (transaction) => {
+      await establishSession(credential.user);
+      await runTransaction(clientDb, async (transaction) => {
           const inviteRef = doc(collection(clientDb, "inviteCodes"), code!);
           const invite = await transaction.get(inviteRef);
           const data = invite.data() as { valid?: boolean; usedAt?: unknown; expiresAt?: { toMillis?: () => number } } | undefined;

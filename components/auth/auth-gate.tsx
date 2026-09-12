@@ -31,19 +31,33 @@ export function AuthGate({ children }: Props) {
 
   useEffect(() => onAuthStateChanged(clientAuth, (next) => { setUser(next); setChecking(false); }), []);
   useEffect(() => {
-    const value = new URLSearchParams(window.location.search).get("code");
+    let active = true;
+    const value = new URLSearchParams(window.location.search).get("code")?.trim() || null;
     setCode(value);
+    setInviteState("checking");
+    setError("");
+
     if (!value) {
       setInviteState("missing");
       if (pathname === "/register") router.replace("/login");
-      return;
+      return () => { active = false; };
     }
+
     getDoc(doc(clientDb, "inviteCodes", value)).then((snapshot) => {
+      if (!active) return;
       const data = snapshot.data() as { valid?: boolean; usedAt?: unknown; expiresAt?: { toMillis?: () => number } } | undefined;
       const expired = Boolean(data?.expiresAt?.toMillis && data.expiresAt.toMillis() < Date.now());
-      setInviteState(snapshot.exists() && data?.valid !== false && !data?.usedAt && !expired ? "valid" : "invalid");
-    }).catch(() => setInviteState("invalid"));
-  }, []);
+      const valid = snapshot.exists() && data?.valid !== false && !data?.usedAt && !expired;
+      setInviteState(valid ? "valid" : "invalid");
+      if (!valid && pathname === "/register") router.replace("/login");
+    }).catch(() => {
+      if (!active) return;
+      setInviteState("invalid");
+      if (pathname === "/register") router.replace("/login");
+    });
+
+    return () => { active = false; };
+  }, [pathname, router]);
 
   const title = useMemo(() => mode === "login" ? "Acesse o JF Radar" : "Crie seu acesso", [mode]);
   const closeInviteMessage = () => {
@@ -88,10 +102,8 @@ export function AuthGate({ children }: Props) {
     setBusy(true);
     try {
       const result = await signInWithPopup(clientAuth, googleProvider);
-      await establishSession(result.user);
       if (mode === "register") {
-      await establishSession(credential.user);
-      await runTransaction(clientDb, async (transaction) => {
+        await runTransaction(clientDb, async (transaction) => {
           const inviteRef = doc(collection(clientDb, "inviteCodes"), code!);
           const invite = await transaction.get(inviteRef);
           const data = invite.data() as { valid?: boolean; usedAt?: unknown; expiresAt?: { toMillis?: () => number } } | undefined;
@@ -99,10 +111,17 @@ export function AuthGate({ children }: Props) {
           transaction.set(doc(clientDb, "users", result.user.uid), { name: result.user.displayName, email: result.user.email, photoURL: result.user.photoURL, createdAt: serverTimestamp(), notificationsEnabled: false }, { merge: true });
           transaction.update(inviteRef, { usedAt: serverTimestamp(), usedBy: result.user.uid });
         });
+        await establishSession(result.user);
       } else {
         await setDoc(doc(clientDb, "users", result.user.uid), { name: result.user.displayName, email: result.user.email, photoURL: result.user.photoURL, createdAt: serverTimestamp() }, { merge: true });
+        await establishSession(result.user);
       }
-    } catch { setError("Não foi possível conectar com o Google."); } finally { setBusy(false); }
+    } catch (cause) {
+      if (cause instanceof Error && cause.message === "INVITE_INVALID") {
+        setError("Este convite já foi usado, expirou ou é inválido.");
+        if (mode === "register") router.replace("/login");
+      } else setError("Não foi possível conectar com o Google.");
+    } finally { setBusy(false); }
   }
 
   const invalidInvite = mode === "register" && inviteState !== "valid";

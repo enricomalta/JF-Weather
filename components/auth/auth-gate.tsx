@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
+import { createUserWithEmailAndPassword, getAdditionalUserInfo, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb, googleProvider } from "@/lib/firebase-client";
 import { AuthenticatedShell } from "@/components/auth/authenticated-shell";
@@ -101,13 +101,15 @@ export function AuthGate({ children }: Props) {
 
   async function googleLogin() {
     setError("");
-    if (mode === "register" && inviteState !== "valid") { setError("É necessário um convite válido para criar uma conta."); return; }
+    const inviteCode = mode === "register" ? new URLSearchParams(window.location.search).get("code")?.trim() || null : null;
+    if (mode === "register" && (inviteState !== "valid" || !inviteCode)) { setError("É necessário um convite válido para criar uma conta."); return; }
     setBusy(true);
     try {
       const result = await signInWithPopup(clientAuth, googleProvider);
       if (mode === "register") {
         const idToken = await result.user.getIdToken(true);
-        const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code, name: result.user.displayName || "", newUser: result.additionalUserInfo?.isNewUser === true }) });
+        const additionalInfo = getAdditionalUserInfo(result);
+        const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken, code: inviteCode, name: result.user.displayName || "", newUser: additionalInfo?.isNewUser === true }) });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           if (data.error === "INVITE_INVALID") throw new Error("INVITE_INVALID");

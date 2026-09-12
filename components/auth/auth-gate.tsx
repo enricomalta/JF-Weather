@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut, updatePassword, updateProfile, User } from "firebase/auth";
-import { collection, doc, getDoc, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, doc, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
 import { clientAuth, clientDb, googleProvider } from "@/lib/firebase-client";
 import { AuthenticatedShell } from "@/components/auth/authenticated-shell";
 
@@ -43,13 +43,15 @@ export function AuthGate({ children }: Props) {
       return () => { active = false; };
     }
 
-    getDoc(doc(clientDb, "inviteCodes", value)).then((snapshot) => {
+    fetch(`/api/auth/invite?code=${encodeURIComponent(value)}`, { cache: "no-store" }).then(async (response) => {
+      const result = await response.json().catch(() => ({ valid: false }));
       if (!active) return;
-      const data = snapshot.data() as { valid?: boolean; usedAt?: unknown; expiresAt?: { toMillis?: () => number } } | undefined;
-      const expired = Boolean(data?.expiresAt?.toMillis && data.expiresAt.toMillis() < Date.now());
-      const valid = snapshot.exists() && data?.valid !== false && !data?.usedAt && !expired;
-      setInviteState(valid ? "valid" : "invalid");
-      if (!valid && pathname === "/register") router.replace("/login");
+      if (result.valid === true) {
+        setInviteState("valid");
+      } else {
+        setInviteState("invalid");
+        if (pathname === "/register") router.replace("/login");
+      }
     }).catch(() => {
       if (!active) return;
       setInviteState("invalid");
@@ -67,8 +69,9 @@ export function AuthGate({ children }: Props) {
     router.replace("/login");
     setError("");
   };
-  if (checking) return <div className="auth-loading" role="status" aria-live="polite"><div className="auth-loading-mark"><span className="auth-loading-ring auth-loading-ring-back" /><span className="auth-loading-ring auth-loading-ring-front" /><img src="/icon.svg" alt="JF Radar" /><i /></div><p>CARREGANDO ACESSO</p></div>;
+  if (checking || (mode === "register" && inviteState === "checking")) return <div className="auth-loading" role="status" aria-live="polite"><div className="auth-loading-mark"><span className="auth-loading-ring auth-loading-ring-back" /><span className="auth-loading-ring auth-loading-ring-front" /><img src="/icon.svg" alt="JF Radar" /><i /></div><p>{mode === "register" ? "VALIDANDO CONVITE" : "CARREGANDO ACESSO"}</p></div>;
   if (user) return <AuthenticatedShell user={user}>{children}</AuthenticatedShell>;
+  if (mode === "register" && inviteState !== "valid") return null;
 
   async function loginWithEmail(event: React.FormEvent) {
     event.preventDefault(); setError(""); setBusy(true);

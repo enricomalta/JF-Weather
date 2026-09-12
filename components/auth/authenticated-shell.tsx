@@ -43,13 +43,19 @@ export function AuthenticatedShell({ user, children }: { user: User; children: R
   }, [user.uid]);
 
   async function toggleNotifications() {
-    if (!notifications) {
-      const registered = await registerPushToken(user.uid);
-      if (!registered) { setNotice("Permita as notificações no navegador para ativá-las."); return; }
+    setNotice("");
+    if (notifications) {
+      setNotifications(false);
+      await setDoc(doc(clientDb, "users", user.uid), { notificationsEnabled: false }, { merge: true });
+      return;
     }
-    const next = !notifications;
-    setNotifications(next);
-    await setDoc(doc(clientDb, "users", user.uid), { notificationsEnabled: next }, { merge: true });
+    const registered = await registerPushToken(user.uid);
+    if (!registered) {
+      setNotice(Notification.permission === "denied" ? "As notificações estão bloqueadas nas permissões do navegador." : "Permita as notificações no navegador para ativá-las.");
+      return;
+    }
+    setNotifications(true);
+    setNotice("Notificações ativadas.");
   }
 
   async function createInvite() {

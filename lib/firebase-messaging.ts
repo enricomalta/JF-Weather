@@ -9,7 +9,7 @@ export async function registerPushToken(userId: string) {
   const vapidKey = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
   if (!vapidKey || !(await isSupported())) return false;
   try {
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
     const token = await getToken(getMessaging(firebaseApp), { vapidKey, serviceWorkerRegistration: registration });
     if (!token) return false;
     await setDoc(doc(clientDb, "users", userId), { fcmTokens: { [token]: true }, notificationsEnabled: true }, { merge: true });
